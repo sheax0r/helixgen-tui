@@ -4,8 +4,10 @@ A terminal UI for [helixgen](https://github.com/sheax0r/helixgen-core):
 manage your tone library, setlists, and a Line 6 Helix Stadium over the LAN
 — from the terminal, no editor app.
 
-> **Status: design phase.** No code yet — the design spec (librarian-first,
-> multi-screen shell) is being written. See `docs/BACKLOG.md`.
+> **Status: design phase.** Only the packaging skeleton exists — the
+> installed `helixgen-tui` command prints a "not yet implemented" placeholder.
+> The design spec (librarian-first, multi-screen shell) is being written; no
+> TUI stack has been chosen. See `docs/BACKLOG.md`.
 
 ## Repo family
 
@@ -27,6 +29,22 @@ with the Helix Stadium desktop app (tracked in helixgen-core's
 **Design principle: slots are invisible.** The UI speaks in tones and
 setlists only — slot addresses like `5A` are an implementation detail the
 user never sees or types.
+
+## Development
+
+Managed with [uv](https://docs.astral.sh/uv/); the package layout is
+`src/helixgen_tui/`, depending on `helixgen[device]` from PyPI (never vendor
+core source here).
+
+```sh
+uv run pytest          # test suite
+uv run ruff check .    # lint
+uv run helixgen-tui    # placeholder entry point (prints "not yet implemented")
+uv build               # sdist + wheel
+```
+
+CI (GitHub Actions) runs ruff + pytest on every PR and push to `main`;
+`publish.yml` releases to PyPI via OIDC trusted publishing on `v*` tags.
 
 > ⚠️ **Unofficial tool — use at your own risk.** Not affiliated with or
 > endorsed by Line 6 / Yamaha. Line 6, Helix, and HX are trademarks of
