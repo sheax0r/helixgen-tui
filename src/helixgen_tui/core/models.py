@@ -33,7 +33,7 @@ class ToneVM:
 class SetlistVM:
     name: str
     sync_enabled: bool
-    tones: tuple[str, ...]  # tone names, in order
+    tones: tuple[str, ...]  # tone ids, in order (currently equal to names for RealLibrary)
 
 
 @dataclass(frozen=True, slots=True)

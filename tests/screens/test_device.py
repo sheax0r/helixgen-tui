@@ -176,3 +176,44 @@ async def test_retry_reconnects_and_refreshes_info():
 
         info_text = str(app.screen.query_one("#device-info").render())
         assert "AC/DC - Back in Black" in info_text
+
+
+# --- real thread-worker spawn: the class of bug the fix addresses ----------
+
+
+async def _wait_until(pilot, cond, timeout=3.0):
+    """Pump the event loop until ``cond()`` holds (or fail after ``timeout``)."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        if cond():
+            return
+    raise AssertionError("condition not met within timeout")
+
+
+async def test_info_refresh_under_real_thread_spawn_renders_without_crashing():
+    """``_refresh_info`` must marshal the ``info`` query's result back to the
+    UI thread: under the REAL Textual thread-worker spawn, DeviceService.query's
+    ``done`` callback runs off-thread, so updating the info Static directly
+    from there would corrupt Textual's UI state instead of just failing a
+    synchronous-spawn test."""
+    port = _InfoDevicePort(state=_CONNECTED, info={"Firmware": "3.50", "Serial": "ABC123"})
+    core = FakeCore(device=port)
+    app = HelixgenTuiApp(core)  # default (real Textual thread-worker) spawn
+    async with app.run_test() as pilot:
+        await pilot.press("4")
+        await _wait_until(
+            pilot,
+            lambda: (
+                app.device_service is not None and app.device_service.state.status == "connected"
+            ),
+        )
+
+        info_widget = app.screen.query_one("#device-info")
+        await _wait_until(pilot, lambda: "Firmware: 3.50" in str(info_widget.render()))
+
+        info_text = str(info_widget.render())
+        assert "Serial: ABC123" in info_text
+        assert "AC/DC - Back in Black" in info_text

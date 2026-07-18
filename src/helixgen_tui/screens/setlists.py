@@ -10,7 +10,10 @@ port call is the source of truth, this is just an optimistic local echo of
 it). ``S``/``A`` are the two device actions: ``S`` syncs the selected setlist
 instantly, ``A`` confirms ``plan_sync_all`` before syncing every setlist —
 both refuse up front when offline, exactly like LibraryScreen's device
-actions.
+actions. ``A`` reads its plan via ``DeviceService.query`` (like
+``screens/irs.py``'s prune/delete plans) rather than calling the port
+directly, opening the ConfirmModal from the plan-ready handler once it
+arrives.
 """
 
 from __future__ import annotations
@@ -20,17 +23,17 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.coordinate import Coordinate
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 
-from helixgen_tui.core.models import OpResult, SetlistVM, ToneVM
+from helixgen_tui.core.device import QueryResult
+from helixgen_tui.core.models import MutationPlan, OpResult, SetlistVM, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _SETLIST_TABLE_ID = "setlists-table"
 _TONES_TABLE_ID = "setlist-tones-table"
-
-_OFFLINE_MSG = "device offline — connect on the Device tab (4) first"
 
 
 class AddToneModal(ModalScreen[str | None]):
@@ -81,6 +84,19 @@ class AddToneModal(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+# Module-level Message (not nested — see app.py's DeviceStateChanged for why):
+# a UI-thread hand-off from a DeviceService `done` callback, which under the
+# production thread-worker spawn runs off-thread, where opening a modal
+# directly would be unsafe.
+class SyncAllPlanReady(Message):
+    """Posted from the ``plan_sync_all`` query's ``done`` callback: push the
+    ConfirmModal on the UI thread once the plan arrives."""
+
+    def __init__(self, result: QueryResult) -> None:
+        self.result = result
+        super().__init__()
 
 
 class SetlistsScreen(LibrarianScreen):
@@ -184,15 +200,6 @@ class SetlistsScreen(LibrarianScreen):
         row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
         return row_key.value
 
-    def _offline(self) -> bool:
-        """True (and reports it to the footer) when no device is connected —
-        the sync actions refuse here without ever touching the port."""
-        service = self.app.device_service
-        if service is None or service.state.status != "connected":
-            self.app.report_op(OpResult(ok=False, message=_OFFLINE_MSG))
-            return True
-        return False
-
     # -- membership: add / remove / reorder ----------------------------------
 
     def action_add_tone(self) -> None:
@@ -275,7 +282,22 @@ class SetlistsScreen(LibrarianScreen):
         if self._offline():
             return
         device = self.app.core.device
-        plan = device.plan_sync_all(False)
+        self.app.device_service.query(
+            "plan_sync_all",
+            lambda: device.plan_sync_all(False),
+            lambda result: self.post_message(SyncAllPlanReady(result)),
+        )
+
+    def on_sync_all_plan_ready(self, message: SyncAllPlanReady) -> None:
+        if not message.result.ok or message.result.value is None:
+            self.app.report_op(
+                OpResult(
+                    ok=False,
+                    message=message.result.message or "could not load sync-all plan",
+                )
+            )
+            return
+        plan: MutationPlan = message.result.value  # type: ignore[assignment]
         self.app.push_screen(ConfirmModal(plan), self._confirm_sync_all)
 
     def _confirm_sync_all(self, confirmed: bool | None) -> None:
