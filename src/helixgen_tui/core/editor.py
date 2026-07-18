@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from helixgen_tui.core.library import RealLibrary
 from helixgen_tui.core.models import (
+    BlockCatalogVM,
     BlockVM,
     ChainVM,
     OpResult,
@@ -357,3 +358,113 @@ class RealEditor:
             return OpResult(ok=False, message=f"could not write tone: {exc}")
 
         return OpResult(ok=True, message="enabled block" if enabled else "bypassed block")
+
+    # -- structural edits (serial paths only; parallel refuses) ------------
+
+    def list_block_catalog(self) -> tuple[BlockCatalogVM, ...]:
+        """The library's block models grouped by category, for the add/swap
+        picker. Empty tuple when the library can't be read."""
+        lib = self._load_library()
+        if lib is None:
+            return ()
+        try:
+            blocks = lib.list_blocks()
+        except Exception:  # noqa: BLE001
+            return ()
+        by_cat: dict[str, list[tuple[str, str]]] = {}
+        for block in blocks:
+            model_id = getattr(block, "model_id", "") or ""
+            if not model_id:
+                continue
+            category = getattr(block, "category", "") or ""
+            display = getattr(block, "display_name", None) or model_id
+            by_cat.setdefault(category, []).append((model_id, display))
+        return tuple(
+            BlockCatalogVM(category=cat, models=tuple(models))
+            for cat, models in sorted(by_cat.items())
+        )
+
+    def add_block(self, tone_id: str, after: BlockVM | None, model: str) -> OpResult:
+        """Insert ``model`` into the (serial, lane-0) chain, after ``after`` when
+        given, else at the end. Refuses on a parallel-routed path (``MutateError``)
+        with no write. Atomic: builds the body in memory, writes only on success."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.add_block(body, model, lib, after=after.model if after else None)
+        except Exception as exc:  # noqa: BLE001 — incl. the parallel-path refusal
+            return OpResult(ok=False, message=f"could not add {model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="added block")
+
+    def remove_block(self, tone_id: str, block: BlockVM) -> OpResult:
+        """Delete ``block`` from the (serial) chain, addressing it by the same
+        ``(model, lane=@path, pos=@position)`` coordinates ``save_params`` uses.
+        Refuses on a parallel-routed path or an ambiguous target (``MutateError``)
+        with no write. Atomic."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.remove_block(body, block.model, lib, lane=block.path, pos=block.position)
+        except Exception as exc:  # noqa: BLE001 — incl. the parallel-path refusal
+            return OpResult(ok=False, message=f"could not remove {block.model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="removed block")
+
+    def swap_model(self, tone_id: str, block: BlockVM, model: str) -> OpResult:
+        """Replace ``block``'s model with ``model`` (same category), in place,
+        addressed by ``(model, lane=@path, pos=@position)``. A category mismatch
+        or ambiguous target (``MutateError``) fails soft with no write. Atomic."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.swap_model(body, block.model, model, lib, lane=block.path, pos=block.position)
+        except Exception as exc:  # noqa: BLE001 — incl. the category-mismatch refusal
+            return OpResult(ok=False, message=f"could not swap {block.model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="swapped block")

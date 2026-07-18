@@ -141,6 +141,15 @@ class ChainVM:
 
 
 @dataclass(frozen=True, slots=True)
+class BlockCatalogVM:
+    """The pickable models in one category, for the block-add / swap picker.
+    ``models`` is ``(model_id, display)`` pairs in the library's order."""
+
+    category: str
+    models: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ParamChange:
     """One committed edit, handed to ``EditorPort.save_params``. ``model`` +
     ``path`` (lane) + ``position`` (pos) address the exact slot to write."""

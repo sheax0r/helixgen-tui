@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from helixgen_tui.core.models import (
+    BlockCatalogVM,
     BlockVM,
     ChainVM,
     DeviceStateVM,
@@ -103,6 +104,14 @@ class EditorPort(Protocol):
     def set_output(self, tone_id: str, level: float, pan: float) -> OpResult: ...
 
     def set_bypass(self, tone_id: str, block: BlockVM, enabled: bool) -> OpResult: ...
+
+    def list_block_catalog(self) -> tuple[BlockCatalogVM, ...]: ...
+
+    def add_block(self, tone_id: str, after: BlockVM | None, model: str) -> OpResult: ...
+
+    def remove_block(self, tone_id: str, block: BlockVM) -> OpResult: ...
+
+    def swap_model(self, tone_id: str, block: BlockVM, model: str) -> OpResult: ...
 
 
 class DeviceUnreachable(Exception):

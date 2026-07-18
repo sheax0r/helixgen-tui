@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import replace as _replace
 
 from helixgen_tui.core.models import (
+    BlockCatalogVM,
     BlockVM,
     ChainVM,
     DeviceStateVM,
@@ -209,10 +210,26 @@ class FakeEditorPort:
     ``get_chain`` reflects the save (and the screen's re-read comes back clean).
     """
 
-    def __init__(self, chains: dict[str, ChainVM] | None = None) -> None:
+    def __init__(
+        self,
+        chains: dict[str, ChainVM] | None = None,
+        catalog: tuple[BlockCatalogVM, ...] | None = None,
+        parallel_tones: set[str] | None = None,
+    ) -> None:
         self.chains: dict[str, ChainVM] = dict(chains) if chains is not None else {}
         self.calls: list[tuple[str, object]] = []
         self.fail_save: bool = False
+        # Models the serial-vs-parallel refusal: a tone id in ``parallel_tones``
+        # carries a split/join, so add/remove refuse (mirroring the real adapter).
+        self.parallel_tones: set[str] = set(parallel_tones) if parallel_tones else set()
+        self.catalog: tuple[BlockCatalogVM, ...] = (
+            catalog
+            if catalog is not None
+            else (
+                BlockCatalogVM(category="drive", models=(("DrvA", "Drive A"), ("DrvB", "Drive B"))),
+                BlockCatalogVM(category="amp", models=(("AmpA", "Amp A"), ("AmpB", "Amp B"))),
+            )
+        )
 
     def get_chain(self, tone_id: str) -> ChainVM | None:
         return self.chains.get(tone_id)
@@ -242,6 +259,94 @@ class FakeEditorPort:
         if chain is not None:
             self.chains[tone_id] = _set_block_enabled(chain, coords, enabled)
         return OpResult(ok=True, message="enabled block" if enabled else "bypassed block")
+
+    def list_block_catalog(self) -> tuple[BlockCatalogVM, ...]:
+        return self.catalog
+
+    def add_block(self, tone_id: str, after: BlockVM | None, model: str) -> OpResult:
+        after_coords = (after.model, after.path, after.position) if after else None
+        self.calls.append(("add_block", (tone_id, after_coords, model)))
+        if tone_id in self.parallel_tones:
+            return OpResult(ok=False, message="add_block not supported on a parallel-routed path")
+        chain = self.chains.get(tone_id)
+        if chain is not None:
+            self.chains[tone_id] = _insert_block(chain, after_coords, model)
+        return OpResult(ok=True, message="added block")
+
+    def remove_block(self, tone_id: str, block: BlockVM) -> OpResult:
+        coords = (block.model, block.path, block.position)
+        self.calls.append(("remove_block", (tone_id, coords)))
+        if tone_id in self.parallel_tones:
+            return OpResult(
+                ok=False, message="remove_block not supported on a parallel-routed path"
+            )
+        chain = self.chains.get(tone_id)
+        if chain is not None:
+            self.chains[tone_id] = _remove_block(chain, coords)
+        return OpResult(ok=True, message="removed block")
+
+    def swap_model(self, tone_id: str, block: BlockVM, model: str) -> OpResult:
+        coords = (block.model, block.path, block.position)
+        self.calls.append(("swap_model", (tone_id, coords, model)))
+        chain = self.chains.get(tone_id)
+        if chain is not None:
+            self.chains[tone_id] = _swap_block_model(chain, coords, model)
+        return OpResult(ok=True, message="swapped block")
+
+
+def _insert_block(chain: ChainVM, after_coords: tuple | None, model: str) -> ChainVM:
+    """Append (or insert after ``after_coords``) a bare block on lane 0 — enough
+    for a FakeEditorPort re-read to reflect an add."""
+    new = BlockVM(model=model, display=model, position=0, path=0, enabled=True, params=())
+    new_paths = []
+    for path in chain.paths:
+        if path.path != 0:
+            new_paths.append(path)
+            continue
+        blocks = list(path.blocks)
+        if after_coords is None:
+            blocks.append(new)
+        else:
+            idx = next(
+                (
+                    i
+                    for i, b in enumerate(blocks)
+                    if (b.model, b.path, b.position) == after_coords
+                ),
+                len(blocks) - 1,
+            )
+            blocks.insert(idx + 1, new)
+        new_paths.append(PathVM(path=path.path, blocks=tuple(blocks)))
+    return _replace(chain, paths=tuple(new_paths))
+
+
+def _remove_block(chain: ChainVM, coords: tuple) -> ChainVM:
+    new_paths = tuple(
+        PathVM(
+            path=path.path,
+            blocks=tuple(
+                b for b in path.blocks if (b.model, b.path, b.position) != coords
+            ),
+        )
+        for path in chain.paths
+    )
+    return _replace(chain, paths=new_paths)
+
+
+def _swap_block_model(chain: ChainVM, coords: tuple, model: str) -> ChainVM:
+    new_paths = tuple(
+        PathVM(
+            path=path.path,
+            blocks=tuple(
+                _replace(b, model=model, display=model)
+                if (b.model, b.path, b.position) == coords
+                else b
+                for b in path.blocks
+            ),
+        )
+        for path in chain.paths
+    )
+    return _replace(chain, paths=new_paths)
 
 
 def _set_block_enabled(chain: ChainVM, coords: tuple, enabled: bool) -> ChainVM:

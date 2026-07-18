@@ -113,26 +113,26 @@ write) for every new verb.
 **Files:** `core/models.py`, `core/ports.py`, `core/editor.py`,
 `tests/fake_core.py`, `tests/core/test_editor.py`.
 
-- [ ] Add `BlockCatalogVM(category: str, models: tuple[tuple[str, str], ...])`
+- [x] Add `BlockCatalogVM(category: str, models: tuple[tuple[str, str], ...])`
   (each entry `(model_id, display)`), frozen.
-- [ ] Add to `EditorPort`:
+- [x] Add to `EditorPort`:
   `list_block_catalog(self) -> tuple[BlockCatalogVM, ...]`,
   `add_block(self, tone_id: str, after: BlockVM | None, model: str) -> OpResult`,
   `remove_block(self, tone_id: str, block: BlockVM) -> OpResult`,
   `swap_model(self, tone_id: str, block: BlockVM, model: str) -> OpResult`.
-- [ ] Failing adapter tests: add-after-block and remove on a **serial** path
+- [x] Failing adapter tests: add-after-block and remove on a **serial** path
   mutate the `.hsp`; swap replaces the model in place; add/remove on a
   **parallel** path (split/join present) returns `OpResult(ok=False, ...)` with a
   clear reason and does **not** write; every failure path leaves disk untouched.
-- [ ] Run, confirm fail.
-- [ ] Implement over `mutate.add_block(..., after=...)` / `mutate.remove_block` /
+- [x] Run, confirm fail.
+- [x] Implement over `mutate.add_block(..., after=...)` / `mutate.remove_block` /
   `mutate.swap_model`; catch `MutateError` (incl. the parallel-path refusal) and
   return `OpResult(ok=False, message=<reason>)`. Read the catalogue from
   `library.Library`. Atomic write per op.
-- [ ] `FakeEditorPort` records `("add_block", ...)`, `("remove_block", ...)`,
+- [x] `FakeEditorPort` records `("add_block", ...)`, `("remove_block", ...)`,
   `("swap_model", ...)` in `.calls`; models a serial vs parallel path so refusal
   is testable; serves a small catalogue.
-- [ ] Run tests, confirm pass. Commit.
+- [x] Run tests, confirm pass. Commit.
 
 ### Task 5: Horizontal chain view in the tone editor (render + navigation)
 
