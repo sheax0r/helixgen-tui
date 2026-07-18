@@ -21,11 +21,19 @@ helixgen-tui — key bindings
     escape   Close a modal / clear a filter
 
   Library
-    enter    Open tone detail
+    enter    Open the tone param editor
     a        Make active (installs first if local-only)
     s        Sync tone to device
     r        Refresh
     /        Filter by name
+
+  Tone editor
+    up/down  Move selection in the focused pane
+    tab      Switch between the blocks and params panes
+    left/rt  Nudge the selected param (params pane)
+    enter    Manual entry: type a value, enter to commit
+    s        Save edits to the library file
+    escape   Back (confirms if there are unsaved edits)
 
   Setlists
     a        Add tone to setlist

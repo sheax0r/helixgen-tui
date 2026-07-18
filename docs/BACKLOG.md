@@ -124,3 +124,51 @@ whole screen** on a malformed tag (a tone named `Bad [/] name` raises
 Do a single sweep converting user/device-derived text surfaces (Text cells
 for tables, `markup=False` for Statics) with a regression test per surface
 using a `[/]`- and `[reverb]`-bearing fixture.
+
+## 13. Full chain management (from tone param editor v1, 2026-07-18)
+
+The tone param editor (`ToneEditorScreen`, v0.2.0) edits **values on existing
+blocks only**. Structural chain editing is out of scope for v1 and deferred here:
+
+- **Add / remove / swap blocks.** Core already exposes these via `helixgen.mutate`
+  (add/remove/swap verbs), so the TUI side is a new screen affordance over an
+  existing engine surface — feasible without a core change.
+- **Reorder blocks, splits, and parallel paths.** Reordering and authoring
+  splits/parallel lanes are **author-time only** in core today (the runtime
+  `mutate` surface doesn't reorder or create splits) — this is **net-new core
+  work** (file the core-side entry against #3's stable-API ask when it starts).
+- **Bypass/enable toggle.** The editor shows each block's enabled/bypassed state
+  read-only; toggling it is a distinct mutation from param-setting (belongs with
+  this structural work).
+- **Multi-flow / dual-slot editing (adversarial-review finding, 2026-07-18).**
+  `RealEditor.get_chain` flattens blocks by lane (`@path`) only — it has no flow
+  index (`extract_blocks_from_hsp` doesn't expose it) — and iterates every raw
+  block, including *both* slots of a dual-cab (while `mutate.set_param` resolves
+  only slot 0). Effects, all **fail-safe** (never a wrong-slot write — an
+  ambiguous target raises `MutateError` and the save fails): (a) two blocks with
+  the same `(model, lane, pos)` across different DSP flows alias to one editor
+  row and can't be saved; (b) a dual-cab's second slot shows as an editable row
+  whose save fails with "not in preset". Cabs are common, so this is a real UX
+  wart. Proper fix needs flow-index-aware coordinates from core (ref #3) so the
+  editor can address and write every slot; until then the editor is honest about
+  the failure rather than corrupting the file.
+
+## 14. Param-schema enrichment dependency on core (from tone param editor v1)
+
+The editor reads per-param **type** and **default** from `library.Library`'s
+block schema, and infers the type from the current value when a block isn't
+catalogued. It has no access to authoritative info the UX wants:
+
+- **Real ranges** — `observed_range` is explicitly not authoritative, so the
+  editor clamps floats to a hardcoded `[0.0, 1.0]` and applies no bound to ints.
+- **Enum labels** — no enum/choice metadata, so enum-like params are nudged as
+  bare ints with no human labels.
+- **Step / units / display names** — none available; the editor uses a fixed
+  0.01 float step and shows raw param keys.
+- **Range validation in `mutate.set_param`** — `set_param` validates name+type
+  but does **not** clamp/validate ranges, so the TUI must enforce bounds itself.
+
+This is the content of existing **#3** (bless a stable core Python API surface)
+applied to param editing — cross-referenced here so the editor's schema needs
+are captured. Land the enrichment in helixgen-core first, then the editor can
+drop its hardcoded clamp and surface real ranges/enums/units.

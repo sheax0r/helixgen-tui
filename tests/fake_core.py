@@ -9,7 +9,16 @@ be told to raise DeviceUnreachable on its next call.
 
 from __future__ import annotations
 
-from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan, OpResult, SetlistVM, ToneVM
+from helixgen_tui.core.models import (
+    ChainVM,
+    DeviceStateVM,
+    IrVM,
+    MutationPlan,
+    OpResult,
+    ParamChange,
+    SetlistVM,
+    ToneVM,
+)
 from helixgen_tui.core.ports import DeviceUnreachable
 
 _OFFLINE_STATE = DeviceStateVM(
@@ -187,6 +196,73 @@ class FakeDevicePort:
         return []
 
 
+class FakeEditorPort:
+    """In-memory EditorPort: a dict of tone_id -> ChainVM, and a recorded log of
+    every ``save_params`` call so screen tests can assert exactly what was
+    written. ``save_params`` also rebases the stored chain's on-disk values to
+    the saved values, mirroring how the real adapter persists — a subsequent
+    ``get_chain`` reflects the save (and the screen's re-read comes back clean).
+    """
+
+    def __init__(self, chains: dict[str, ChainVM] | None = None) -> None:
+        self.chains: dict[str, ChainVM] = dict(chains) if chains is not None else {}
+        self.calls: list[tuple[str, list[ParamChange]]] = []
+        self.fail_save: bool = False
+
+    def get_chain(self, tone_id: str) -> ChainVM | None:
+        return self.chains.get(tone_id)
+
+    def save_params(self, tone_id: str, changes: list[ParamChange]) -> OpResult:
+        self.calls.append((tone_id, list(changes)))
+        if self.fail_save:
+            return OpResult(ok=False, message="save failed (fake)")
+        chain = self.chains.get(tone_id)
+        if chain is not None:
+            self.chains[tone_id] = _apply_changes(chain, changes)
+        n = len(changes)
+        return OpResult(ok=True, message=f"saved {n} change{'s' if n != 1 else ''}")
+
+
+def _apply_changes(chain: ChainVM, changes: list[ParamChange]) -> ChainVM:
+    """Return a copy of ``chain`` with each change's new value baked into the
+    matching ParamVM (used by FakeEditorPort to rebase after a save)."""
+    from helixgen_tui.core.models import BlockVM, ParamVM, PathVM
+
+    index = {(c.model, c.path, c.position, c.param): c.value for c in changes}
+
+    def _param(block: BlockVM, p: ParamVM) -> ParamVM:
+        key = (block.model, block.path, block.position, p.name)
+        if key in index:
+            return ParamVM(name=p.name, value=index[key], type=p.type, default=p.default)
+        return p
+
+    new_paths = tuple(
+        PathVM(
+            path=path.path,
+            blocks=tuple(
+                BlockVM(
+                    model=b.model,
+                    display=b.display,
+                    position=b.position,
+                    path=b.path,
+                    enabled=b.enabled,
+                    params=tuple(_param(b, p) for p in b.params),
+                )
+                for b in path.blocks
+            ),
+        )
+        for path in chain.paths
+    )
+    return ChainVM(
+        tone_id=chain.tone_id,
+        name=chain.name,
+        guitar=chain.guitar,
+        description=chain.description,
+        setlists=chain.setlists,
+        paths=new_paths,
+    )
+
+
 class FakeCore:
     """In-memory Core: all constructor args optional with empty-collection defaults."""
 
@@ -196,11 +272,16 @@ class FakeCore:
         setlists: list[SetlistVM] | None = None,
         local_irs: list[IrVM] | None = None,
         device: FakeDevicePort | None = None,
+        editor: FakeEditorPort | None = None,
+        chains: dict[str, ChainVM] | None = None,
     ) -> None:
         self.library = FakeLibraryPort(tones)
         self.setlists = FakeSetlistPort(setlists)
         self.local_irs: list[IrVM] = list(local_irs) if local_irs is not None else []
         self.device: FakeDevicePort = device if device is not None else FakeDevicePort()
+        self.editor: FakeEditorPort = (
+            editor if editor is not None else FakeEditorPort(chains)
+        )
 
     def list_local_irs(self) -> list[IrVM]:
         return list(self.local_irs)

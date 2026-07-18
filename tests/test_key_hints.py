@@ -79,12 +79,35 @@ async def test_clicking_a_footer_key_triggers_the_action() -> None:
 
 async def test_double_click_selects_a_row_like_enter() -> None:
     """First click moves the DataTable cursor, second click on the same row
-    posts RowSelected — so double-clicking a library tone opens its detail."""
+    posts RowSelected — so double-clicking a library tone opens its editor."""
     from textual.widgets import DataTable
 
-    from helixgen_tui.screens.library import ToneDetailModal
+    from helixgen_tui.core.models import BlockVM, ChainVM, ParamVM, PathVM
+    from helixgen_tui.screens.tone_editor import ToneEditorScreen
 
-    app = HelixgenTuiApp(FakeCore(tones=_TONES))
+    chain = ChainVM(
+        tone_id="tone-2",
+        name="Rhythm Crunch",
+        guitar="LP",
+        description="",
+        setlists=(),
+        paths=(
+            PathVM(
+                path=0,
+                blocks=(
+                    BlockVM(
+                        model="M",
+                        display="M",
+                        position=1,
+                        path=0,
+                        enabled=True,
+                        params=(ParamVM(name="p", value=0.5, type="float", default=0.5),),
+                    ),
+                ),
+            ),
+        ),
+    )
+    app = HelixgenTuiApp(FakeCore(tones=_TONES, chains={"tone-2": chain}))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         table = app.screen.query_one("#library-table", DataTable)
@@ -92,7 +115,7 @@ async def test_double_click_selects_a_row_like_enter() -> None:
         await pilot.click(offset=target)
         await pilot.click(offset=target)
         await pilot.pause()
-        assert isinstance(app.screen, ToneDetailModal)
+        assert isinstance(app.screen, ToneEditorScreen)
 
 
 async def test_status_and_bindings_footers_do_not_overlap() -> None:

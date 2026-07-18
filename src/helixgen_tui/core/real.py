@@ -20,6 +20,7 @@ import pathlib
 from contextlib import contextmanager
 from typing import Iterator
 
+from helixgen_tui.core.editor import RealEditor
 from helixgen_tui.core.library import RealLibrary
 from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan, OpResult
 from helixgen_tui.core.ports import Core, DeviceUnreachable
@@ -384,6 +385,7 @@ class RealCore:
         self.library = RealLibrary()
         self.setlists = RealSetlists()
         self.device = RealDevicePort()
+        self.editor = RealEditor()
 
     def list_local_irs(self) -> list[IrVM]:
         """Registered user IRs from mapping.json, enriched from IR sidecars.
