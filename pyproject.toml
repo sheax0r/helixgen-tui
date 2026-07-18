@@ -60,4 +60,4 @@ src = ["src", "tests"]
 [tool.ruff.lint.per-file-ignores]
 # The Task 1 brief specifies test_shell.py verbatim; some tests bind
 # `pilot` from `run_test()` without using it, which trips F841.
-"tests/*" = ["F841"]
+"tests/test_shell.py" = ["F841"]
