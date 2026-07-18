@@ -6,7 +6,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Static
 
+from helixgen_tui.core.ports import Core
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.library import LibraryScreen
 from helixgen_tui.widgets.help_overlay import HelpOverlay
 
 # Ordered (key, mode_name, label) tuples shared by every screen's TabStrip.
@@ -16,16 +18,6 @@ MODE_TABS: list[tuple[str, str, str]] = [
     ("3", "irs", "IRs"),
     ("4", "device", "Device"),
 ]
-
-
-class LibraryScreen(LibrarianScreen):
-    """Placeholder library-mode screen (real content lands in a later task)."""
-
-    TAB_LABEL = "Library"
-    MODE_NAME = "library"
-
-    def body(self) -> ComposeResult:
-        yield Static("Library")
 
 
 class SetlistsScreen(LibrarianScreen):
@@ -81,6 +73,15 @@ class HelixgenTuiApp(App):
         Binding("question_mark", "show_help", "Help", key_display="?"),
         Binding("q", "quit", "Quit"),
     ]
+
+    def __init__(self, core: Core) -> None:
+        """`core` is the app's single entry point into the data layer.
+
+        Every screen reaches it via ``self.app.core`` — screens never import
+        helixgen directly (enforced by tests/test_boundaries.py).
+        """
+        self.core = core
+        super().__init__()
 
     def action_show_help(self) -> None:
         self.push_screen(HelpOverlay())
