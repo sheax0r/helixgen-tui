@@ -58,3 +58,20 @@ before any code.
   (b) device screen `r` retry needs a second press after reconnect under the
   production spawn (probe async, info refresh immediate); (c) format_device_text
   substring heuristic is fragile; (d) library filter matches name only.
+
+## 9. v0.1.1 residuals (from PR #14 review)
+
+- Device-pane delete/rename still resolve IRs by display name first-match on the
+  device — acting on a duplicate-named *device* IR may hit the wrong entry.
+  Local-pane push was fixed in v0.1.1 (pushes by irhash); the device side needs
+  hash-addressed core verbs (relates #6).
+- Upstream Textual bug worth reporting: on Python >= 3.12, `run_async` installs
+  `asyncio.eager_task_factory`, so a MODES app whose default screen contains an
+  `Input` crashes at boot (`ScreenStackError` from the selection watcher —
+  `App.clear_selection` only catches `NoScreen`). We carry a `clear_selection`
+  override in `app.py`; drop it once fixed upstream (textual 8.2.8 affected).
+- `App.screen` can also raise `UnknownModeError` (not caught by our override);
+  believed unreachable — noted in case a teardown-phase variant ever appears.
+- IR selection helpers now index into the backing list and would raise
+  `IndexError` on a table/list mismatch instead of degrading to None —
+  intentional fail-fast, noting the behavior change.
