@@ -5,7 +5,11 @@ dist/
 build/
 .venv/
 .pytest_cache/
+.ruff_cache/
 .DS_Store
+
+# session worktrees
+.claude/worktrees/
 
 # paid commercial IR packs — never commit (user rule)
 irs/
