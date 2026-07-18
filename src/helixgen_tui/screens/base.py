@@ -28,3 +28,11 @@ class LibrarianScreen(Screen):
     def body(self) -> ComposeResult:
         """Compose hook: subclasses yield the screen's main content here."""
         raise NotImplementedError
+
+    def on_mount(self) -> None:
+        """Seed this screen's fresh footer from the app's current device state,
+        so switching modes never resets a connected footer back to offline."""
+        footer = self.query_one(StatusFooter)
+        footer.set_device_text(self.app.device_text)
+        if self.app.last_action:
+            footer.set_last_action(self.app.last_action)

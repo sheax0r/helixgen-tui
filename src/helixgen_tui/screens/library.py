@@ -1,4 +1,11 @@
-"""LibraryScreen: read-only browse of the tone library — table, detail modal, filter."""
+"""LibraryScreen: browse the tone library and drive make-active / sync-tone.
+
+Read paths (table, detail modal, filter) stay pure-local. The two device
+actions go through the app's ``DeviceService``: ``a`` makes a tone active
+(instant for an already-synced tone; a confirm-then-install-then-activate flow
+for a local-only one), ``s`` syncs a tone. When offline both refuse up front —
+no port call, no modal — and say so in the footer.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +13,13 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
+from textual.coordinate import Coordinate
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static
 
-from helixgen_tui.core.models import SyncState, ToneVM
+from helixgen_tui.core.models import MutationPlan, OpResult, SyncState, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _SYNC_GLYPH = {
     SyncState.SYNCED: "✓",  # check mark
@@ -20,6 +29,8 @@ _SYNC_GLYPH = {
 
 _FILTER_ID = "library-filter"
 _TABLE_ID = "library-table"
+
+_OFFLINE_MSG = "device offline — connect on the Device tab (4) first"
 
 
 class ToneDetailModal(ModalScreen[None]):
@@ -62,13 +73,15 @@ class ToneDetailModal(ModalScreen[None]):
 
 
 class LibraryScreen(LibrarianScreen):
-    """Library-mode screen: browse tones, view details, filter, refresh — all read-only."""
+    """Library-mode screen: browse tones, view details, filter, refresh, activate, sync."""
 
     TAB_LABEL = "Library"
     MODE_NAME = "library"
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("a", "make_active", "Activate"),
+        Binding("s", "sync_tone", "Sync"),
         Binding("slash", "focus_filter", "Filter", key_display="/"),
         Binding("escape", "clear_filter", "Clear", show=False),
     ]
@@ -82,6 +95,7 @@ class LibraryScreen(LibrarianScreen):
         yield DataTable(id=_TABLE_ID, cursor_type="row")
 
     def on_mount(self) -> None:
+        super().on_mount()  # seed the footer from the app's device state
         table = self.query_one(f"#{_TABLE_ID}", DataTable)
         table.add_columns("Tone", "Guitar", "Sync")
         self.refresh_tones()
@@ -124,3 +138,72 @@ class LibraryScreen(LibrarianScreen):
         tone = self.app.core.library.get_tone(tone_id)
         if tone is not None:
             self.app.push_screen(ToneDetailModal(tone))
+
+    # -- device actions ----------------------------------------------------
+
+    def _selected_tone(self) -> ToneVM | None:
+        """The tone under the table cursor, or None on an empty/filtered table."""
+        table = self.query_one(f"#{_TABLE_ID}", DataTable)
+        if table.row_count == 0:
+            return None
+        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
+        return self.app.core.library.get_tone(row_key.value)
+
+    def _offline(self) -> bool:
+        """True (and reports it to the footer) when no device is connected —
+        the actions refuse here without ever touching the port."""
+        service = self.app.device_service
+        if service is None or service.state.status != "connected":
+            self.app.report_op(OpResult(ok=False, message=_OFFLINE_MSG))
+            return True
+        return False
+
+    def action_make_active(self) -> None:
+        tone = self._selected_tone()
+        if tone is None or self._offline():
+            return
+        device = self.app.core.device
+        if tone.sync == SyncState.SYNCED:
+            self.app.device_service.run(
+                "make_active",
+                lambda: device.make_active(tone.tone_id),
+                self.app.report_op,
+            )
+            return
+        # Local-only: confirm, then install (sync) the tone before activating it.
+        plan = MutationPlan(
+            title="Install tone on the device?",
+            lines=(
+                f"{tone.name} is local-only — not on the Helix yet.",
+                "Installing will sync it to the device, then make it active.",
+            ),
+        )
+        self.app.push_screen(ConfirmModal(plan), lambda ok: self._install_then_activate(tone, ok))
+
+    def _install_then_activate(self, tone: ToneVM, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        device = self.app.core.device
+        service = self.app.device_service
+
+        def _after_sync(result: OpResult) -> None:
+            self.app.report_op(result)
+            if result.ok:
+                service.run(
+                    "make_active",
+                    lambda: device.make_active(tone.tone_id),
+                    self.app.report_op,
+                )
+
+        service.run("sync_tone", lambda: device.sync_tone(tone.tone_id), _after_sync)
+
+    def action_sync_tone(self) -> None:
+        tone = self._selected_tone()
+        if tone is None or self._offline():
+            return
+        device = self.app.core.device
+        self.app.device_service.run(
+            "sync_tone",
+            lambda: device.sync_tone(tone.tone_id),
+            self.app.report_op,
+        )

@@ -220,3 +220,109 @@ async def test_refresh_while_filtered_keeps_filter_applied():
         assert table.row_count == 2
         rendered_names = {str(table.get_cell_at((row, 0))) for row in range(table.row_count)}
         assert rendered_names == {"Foo Fighters - Everlong", "New Everlong Cover"}
+
+
+# --- device actions: make-active / sync-tone (Task 5) ----------------------
+
+from helixgen_tui.core.models import DeviceStateVM  # noqa: E402
+from helixgen_tui.widgets.confirm_modal import ConfirmModal  # noqa: E402
+from helixgen_tui.widgets.status_footer import StatusFooter  # noqa: E402
+
+from fake_core import FakeDevicePort  # noqa: E402
+
+_CONNECTED = DeviceStateVM(
+    status="connected",
+    model="Helix Stadium",
+    address="192.168.4.2",
+    active_tone=None,
+    detail="",
+)
+
+
+def _sync_spawn(fn):
+    fn()
+
+
+def _device_app(port):
+    core = FakeCore(
+        tones=list(_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    return HelixgenTuiApp(core, device_spawn=_sync_spawn)
+
+
+async def test_footer_shows_connected_model_when_probe_succeeds():
+    app = _device_app(FakeDevicePort(state=_CONNECTED))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.screen.query_one(StatusFooter)
+        assert "connected" in footer.device_text
+        assert "Helix Stadium" in footer.device_text
+
+
+async def test_make_active_synced_calls_port_and_footer_shows_result():
+    port = FakeDevicePort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("a")  # cursor on row 0 = AC/DC (SYNCED, tone-1)
+        await pilot.pause()
+        assert ("make_active", ("tone-1",)) in port.calls
+        footer = app.screen.query_one(StatusFooter)
+        assert "make_active ok" in footer.last_action
+
+
+async def test_make_active_offline_refuses_without_touching_port():
+    port = FakeDevicePort()  # default offline state
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.pause()
+        assert port.calls == []
+        assert not isinstance(app.screen, ConfirmModal)
+        footer = app.screen.query_one(StatusFooter)
+        assert "offline" in footer.last_action.lower()
+
+
+async def test_make_active_local_only_confirms_then_installs_then_activates():
+    port = FakeDevicePort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("down")  # row 1 = Foo Fighters (LOCAL_ONLY, tone-2)
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmModal)
+        modal_text = "\n".join(str(w.render()) for w in app.screen.query("Static"))
+        assert "install" in modal_text.lower()
+
+        await pilot.press("y")
+        await pilot.pause()
+        assert ("sync_tone", ("tone-2",)) in port.calls
+        assert ("make_active", ("tone-2",)) in port.calls
+        assert port.calls.index(("sync_tone", ("tone-2",))) < port.calls.index(
+            ("make_active", ("tone-2",))
+        )
+
+
+async def test_make_active_local_only_cancel_makes_no_calls():
+    port = FakeDevicePort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("down")
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmModal)
+
+        await pilot.press("n")
+        await pilot.pause()
+        assert port.calls == []
+        assert not isinstance(app.screen, ConfirmModal)
+
+
+async def test_s_syncs_selected_tone():
+    port = FakeDevicePort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("s")  # cursor on row 0 = tone-1
+        await pilot.pause()
+        assert ("sync_tone", ("tone-1",)) in port.calls
