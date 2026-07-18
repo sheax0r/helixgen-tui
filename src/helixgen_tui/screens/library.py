@@ -112,8 +112,7 @@ class LibraryScreen(LibrarianScreen):
 
     def action_clear_filter(self) -> None:
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
-        filter_input.value = ""
-        self._rebuild_table()
+        filter_input.value = ""  # triggers Input.Changed -> _on_filter_changed -> rebuild
         self.query_one(f"#{_TABLE_ID}", DataTable).focus()
 
     @on(Input.Changed, f"#{_FILTER_ID}")
