@@ -433,3 +433,24 @@ async def test_screen_resume_refreshes_library():
         await pilot.pause()
         table = app.screen.query_one(DataTable)
         assert table.row_count == 4
+
+
+async def test_bracketed_tone_name_renders_literally_no_crash():
+    """Markup regression (#12): a tone name/guitar carrying brackets must render
+    verbatim in the DataTable cells and never raise MarkupError."""
+    tones = [
+        ToneVM(
+            name="Bad [/] name",
+            tone_id="tone-b1",
+            guitar="[reverb]",
+            description=None,
+            sync=SyncState.SYNCED,
+            setlists=(),
+        ),
+    ]
+    app = HelixgenTuiApp(_core(tones=tones))
+    async with app.run_test():
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 1
+        assert str(table.get_cell_at((0, 0))) == "Bad [/] name"
+        assert str(table.get_cell_at((0, 1))) == "[reverb]"

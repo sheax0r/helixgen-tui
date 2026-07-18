@@ -47,7 +47,10 @@ class ConfirmModal(ModalScreen[bool]):
         plan = self._plan
         body = "\n".join((plan.title, "", *plan.lines, "", "[y] confirm   [n] cancel"))
         with Container():
-            yield Static(body)
+            # markup=False: the plan's title/lines are model data and the literal
+            # ``[y]``/``[n]`` footer must survive — console markup would crash on a
+            # malformed tag or eat the bracket tokens.
+            yield Static(body, markup=False)
 
     def action_confirm(self) -> None:
         self.dismiss(True)

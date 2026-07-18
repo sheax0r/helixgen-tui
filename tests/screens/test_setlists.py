@@ -427,3 +427,44 @@ async def test_screen_resume_refreshes_setlists():
         await _goto_setlists(pilot)  # back — on_screen_resume re-reads
         left = app.screen.query(DataTable)[0]
         assert left.row_count == 3
+
+
+async def test_bracketed_names_render_literally_no_crash():
+    """Markup regression (#12): setlist names, setlist-tone names, and the
+    AddToneModal picker must render bracket-bearing names verbatim, never crash."""
+    tones = [
+        ToneVM(
+            name="Bad [/] tone",
+            tone_id="tone-b1",
+            guitar=None,
+            description=None,
+            sync=SyncState.SYNCED,
+            setlists=("[reverb] set",),
+        ),
+        ToneVM(
+            name="Picker [x] tone",
+            tone_id="tone-b2",
+            guitar=None,
+            description=None,
+            sync=SyncState.LOCAL_ONLY,
+            setlists=(),
+        ),
+    ]
+    setlists = [SetlistVM(name="[reverb] set", sync_enabled=True, tones=("tone-b1",))]
+    core = FakeCore(tones=tones, setlists=setlists)
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        assert isinstance(app.screen, SetlistsScreen)
+        left, right = app.screen.query(DataTable)[0], app.screen.query(DataTable)[1]
+        assert str(left.get_cell_at((0, 0))) == "[reverb] set"
+        assert str(right.get_cell_at((0, 0))) == "Bad [/] tone"
+
+        # AddToneModal picker: the only candidate (tone-b2) shows its brackets literally
+        left.focus()
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, AddToneModal)
+        picker = app.screen.query_one(DataTable)
+        assert str(picker.get_cell_at((0, 0))) == "Picker [x] tone"

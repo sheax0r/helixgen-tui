@@ -122,8 +122,13 @@ class DeviceScreen(LibrarianScreen):
     ]
 
     def body(self) -> ComposeResult:
-        yield Static("", id=_INFO_ID)
-        yield Static("", id=_LOCKS_ID)
+        # markup=False: info values, active-tone name, and lock labels are
+        # device-controlled strings — a stray ``[...]`` must render verbatim,
+        # not be parsed as console markup (which corrupts or crashes on a
+        # malformed tag). update() re-renders under the widget's markup setting,
+        # so the guard sticks across every _apply_info/_apply_locks refresh.
+        yield Static("", id=_INFO_ID, markup=False)
+        yield Static("", id=_LOCKS_ID, markup=False)
 
     def on_mount(self) -> None:
         super().on_mount()  # seed the footer from the app's current device state
