@@ -17,3 +17,7 @@ irs/
 # WAV audio is never committed (paid-IR incident guard); force-add (-f) intentional synthesized fixtures
 *.wav
 *.WAV
+
+# ralphex runtime (not committed)
+.ralphex/progress/
+.ralphex/worktrees/
