@@ -22,6 +22,7 @@ from helixgen_tui.core.models import DeviceStateVM, OpResult
 from helixgen_tui.core.ports import Core
 from helixgen_tui.screens.base import LibrarianScreen
 from helixgen_tui.screens.library import LibraryScreen
+from helixgen_tui.screens.setlists import SetlistsScreen
 from helixgen_tui.widgets.help_overlay import HelpOverlay
 from helixgen_tui.widgets.status_footer import DEFAULT_DEVICE_TEXT, StatusFooter
 
@@ -70,16 +71,6 @@ def format_device_text(vm: DeviceStateVM) -> str:
     if detail and not detail.startswith("device:") and detail not in text:
         text = f"{text} · {detail}"
     return text
-
-
-class SetlistsScreen(LibrarianScreen):
-    """Placeholder setlists-mode screen (real content lands in a later task)."""
-
-    TAB_LABEL = "Setlists"
-    MODE_NAME = "setlists"
-
-    def body(self) -> ComposeResult:
-        yield Static("Setlists")
 
 
 class IrsScreen(LibrarianScreen):
