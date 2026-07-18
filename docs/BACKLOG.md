@@ -140,6 +140,18 @@ blocks only**. Structural chain editing is out of scope for v1 and deferred here
 - **Bypass/enable toggle.** The editor shows each block's enabled/bypassed state
   read-only; toggling it is a distinct mutation from param-setting (belongs with
   this structural work).
+- **Multi-flow / dual-slot editing (adversarial-review finding, 2026-07-18).**
+  `RealEditor.get_chain` flattens blocks by lane (`@path`) only — it has no flow
+  index (`extract_blocks_from_hsp` doesn't expose it) — and iterates every raw
+  block, including *both* slots of a dual-cab (while `mutate.set_param` resolves
+  only slot 0). Effects, all **fail-safe** (never a wrong-slot write — an
+  ambiguous target raises `MutateError` and the save fails): (a) two blocks with
+  the same `(model, lane, pos)` across different DSP flows alias to one editor
+  row and can't be saved; (b) a dual-cab's second slot shows as an editable row
+  whose save fails with "not in preset". Cabs are common, so this is a real UX
+  wart. Proper fix needs flow-index-aware coordinates from core (ref #3) so the
+  editor can address and write every slot; until then the editor is honest about
+  the failure rather than corrupting the file.
 
 ## 14. Param-schema enrichment dependency on core (from tone param editor v1)
 

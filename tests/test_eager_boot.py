@@ -82,3 +82,54 @@ async def test_irs_screen_mounts_with_duplicate_ir_names() -> None:
         # Selection resolves by row index, so equal names stay distinguishable.
         screen = app.screen
         assert screen._selected_local_ir().irhash == "b182d8c6124951cd"
+
+
+async def test_tone_editor_and_manual_entry_mount_under_eager_task_factory() -> None:
+    """The param editor mounts an ``Input`` for manual entry; under the eager
+    task factory its selection watcher hits ``app.screen`` mid-mount — the same
+    class of crash that sank v0.1.0's filter Input. Boot the editor and open
+    manual entry under the production factory to guard the new path."""
+    from helixgen_tui.core.models import BlockVM, ChainVM, ParamVM, PathVM, ToneVM, SyncState
+    from helixgen_tui.screens.tone_editor import ToneEditorScreen
+
+    tone = ToneVM(
+        name="T",
+        tone_id="tone-1",
+        guitar=None,
+        description=None,
+        sync=SyncState.SYNCED,
+        setlists=(),
+    )
+    chain = ChainVM(
+        tone_id="tone-1",
+        name="T",
+        guitar=None,
+        description=None,
+        setlists=(),
+        paths=(
+            PathVM(
+                path=0,
+                blocks=(
+                    BlockVM(
+                        model="M",
+                        display="M",
+                        position=1,
+                        path=0,
+                        enabled=True,
+                        params=(ParamVM(name="Drive", value=0.5, type="float", default=0.5),),
+                    ),
+                ),
+            ),
+        ),
+    )
+    with _EagerFactory():
+        app = HelixgenTuiApp(FakeCore(tones=[tone], chains={"tone-1": chain}))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")  # open the editor
+            assert isinstance(app.screen, ToneEditorScreen)
+            await pilot.press("tab")  # params pane
+            await pilot.press("enter")  # mount the manual-entry Input
+            from textual.widgets import Input
+
+            assert app.screen.query_one("#editor-entry", Input) is not None

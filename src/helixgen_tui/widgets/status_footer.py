@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -31,10 +32,15 @@ class StatusFooter(Static):
         """Update the last-action message text (right side of the footer)."""
         self.last_action = text
 
-    def render(self) -> str:
+    def render(self) -> Text:
+        # Return a rich Text (never a str): device- and now user-derived text
+        # (a rejected manual-entry value, a bracketed tone name) flows through
+        # last_action, and a Static str is console-markup-parsed — a `[/]` or
+        # `[reverb]` would be stripped or crash the whole app (bug class #12).
+        # A Text bypasses the markup parse entirely.
         if self.last_action:
-            return f"{self.device_text}   {self.last_action}"
-        return self.device_text
+            return Text(f"{self.device_text}   {self.last_action}")
+        return Text(self.device_text)
 
     def watch_device_text(self, device_text: str) -> None:
         self.refresh()

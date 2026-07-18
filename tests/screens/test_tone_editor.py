@@ -284,3 +284,82 @@ async def test_bracketed_param_and_block_text_render_literally():
         header = str(app.screen.query_one("#editor-header", Static).render())
         assert "[Live]" in header
         assert "[reverb]" in header
+
+
+async def test_manual_entry_with_bracket_param_name_does_not_crash():
+    """A param whose NAME carries markup brackets must be manually-editable
+    without crashing: the entry prompt escapes the name (border_title is
+    markup-parsed), and rejecting a bracket-bearing VALUE routes an error
+    through the footer (now a rich Text, not markup-parsed)."""
+    chain = ChainVM(
+        tone_id="tone-1",
+        name="T",
+        guitar=None,
+        description=None,
+        setlists=(),
+        paths=(
+            PathVM(
+                path=0,
+                blocks=(
+                    BlockVM(
+                        model="M",
+                        display="M",
+                        position=1,
+                        path=0,
+                        enabled=True,
+                        params=(ParamVM(name="Gain [/]", value=0.5, type="float", default=0.5),),
+                    ),
+                ),
+            ),
+        ),
+    )
+    app = _app(chain)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        await pilot.press("tab")
+        await pilot.press("enter")  # open manual entry on the bracket-named param
+        assert app.screen.query("#editor-entry")  # opened, did not crash
+        inp = app.screen.query_one("#editor-entry", Input)
+        inp.value = "[/]"  # a malformed-markup value
+        await pilot.press("enter")  # reject -> error to the footer
+        # app is still alive and on the editor; footer did not raise MarkupError
+        assert isinstance(app.screen, ToneEditorScreen)
+        assert "invalid" in app.last_action.lower()
+        assert dict(_params_cells(app))["Gain [/]"] == "0.50"
+
+
+async def test_float_edit_back_to_display_value_clears_dirty_for_non_2dp_disk_value():
+    """An on-disk float not aligned to 2dp (0.333 -> shows 0.33) must still
+    prune cleanly: nudge up then down lands on 0.33 and dirty clears, so a
+    no-op save can't silently rewrite 0.333 -> 0.33."""
+    chain = ChainVM(
+        tone_id="tone-1",
+        name="T",
+        guitar=None,
+        description=None,
+        setlists=(),
+        paths=(
+            PathVM(
+                path=0,
+                blocks=(
+                    BlockVM(
+                        model="M",
+                        display="M",
+                        position=1,
+                        path=0,
+                        enabled=True,
+                        params=(ParamVM(name="Mix", value=0.333, type="float", default=0.5),),
+                    ),
+                ),
+            ),
+        ),
+    )
+    app = _app(chain)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        await pilot.press("tab")
+        assert not app.screen.is_dirty
+        await pilot.press("right")  # 0.33 -> 0.34
+        assert app.screen.is_dirty
+        await pilot.press("left")  # 0.34 -> 0.33 (== on-disk at display precision)
+        assert not app.screen.is_dirty

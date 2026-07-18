@@ -85,3 +85,31 @@ enter); nav actions are gated while it is open.
 
 - **#13** full chain management (add/remove/reorder + splits/parallel paths).
 - **#14** param-schema enrichment dependency on core (cross-refs #3).
+
+## Adversarial review (2026-07-18) — findings + disposition
+
+An independent review subagent tried to break the change. Verified-safe:
+boundary rule, save atomicity (no partial write), coordinate-mapping fail-safe
+(ambiguous target -> `MutateError`, never a wrong-slot write), int/bool nudge,
+NaN/inf/empty/whitespace manual entry, and the leave-confirm gate.
+
+Findings and disposition:
+
+1. **[blocker] Rejected manual-entry value crashed the app via the footer.** A
+   bracket-bearing value routed into `StatusFooter`, a `markup=True` `Static`,
+   raised `MarkupError`. **Fixed** — `StatusFooter.render` now returns a
+   `rich.text.Text` (repo-wide fix for the bug class in backlog #12). Regression
+   test added.
+2. **[major] Manual entry on a bracket-named param crashed on `border_title`
+   assignment** (markup-parsed). **Fixed** — the prompt is `markup.escape()`d.
+   Regression test added.
+3. **[major] Multi-flow / dual-slot blocks flatten by lane, dropping the flow
+   index** — aliased rows and unwritable dual-cab slots. Behavior is fail-safe
+   (never a wrong-slot write). **Deferred** to backlog #13 (needs flow-index
+   coordinates from core, ref #3).
+4. **[minor] Float dirty-prune couldn't clear for a non-2dp on-disk value** (0.333
+   shown as 0.33). **Fixed** — floats compare at display precision; regression
+   test added.
+5. **[nit] The markup regression test only covered the passive render path.**
+   **Fixed** — added a manual-entry-with-brackets test covering both crash
+   surfaces above.

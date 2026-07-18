@@ -18,6 +18,7 @@ name renders literally instead of being stripped / crashing the screen.
 
 from __future__ import annotations
 
+from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -292,9 +293,20 @@ class ToneEditorScreen(Screen):
     # -- value editing -----------------------------------------------------
 
     def _set_value(self, block: BlockVM, param: ParamVM, value: object) -> None:
-        """Record a working edit, pruning it when it matches the on-disk value."""
+        """Record a working edit, pruning it when it matches the on-disk value.
+
+        Floats are compared at display precision (2dp): an on-disk value like
+        0.333 shows as 0.33, so nudging up then down lands on 0.33 — without
+        this the edit would never prune and a "no-op" save would rewrite the
+        value to 0.33 (silent drift)."""
         key = (block.model, block.path, block.position, param.name)
-        if value == param.value:
+        if param.type == "float" and isinstance(value, (int, float)) and isinstance(
+            param.value, (int, float)
+        ):
+            unchanged = _clamp_float(float(value)) == _clamp_float(float(param.value))
+        else:
+            unchanged = value == param.value
+        if unchanged:
             self._edits.pop(key, None)
         else:
             self._edits[key] = value
@@ -329,7 +341,9 @@ class ToneEditorScreen(Screen):
         self._editing = True
         current = self._current_value(block, param)
         entry = Input(value=_fmt_value(current), id=_ENTRY_ID)
-        entry.border_title = f"{param.name} = "
+        # escape(): border_title is console-markup-parsed, so a param name
+        # carrying brackets (e.g. "[/]") would raise MarkupError on assignment.
+        entry.border_title = escape(f"edit {param.name}")
         self.mount(entry)
         entry.focus()
 
