@@ -12,15 +12,14 @@ from __future__ import annotations
 
 from typing import Callable
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
-from textual.widgets import Static
 
 from helixgen_tui.core.device import DeviceService
 from helixgen_tui.core.models import DeviceStateVM, OpResult
 from helixgen_tui.core.ports import Core
-from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.device import DeviceScreen
 from helixgen_tui.screens.irs import IrsScreen
 from helixgen_tui.screens.library import LibraryScreen
 from helixgen_tui.screens.setlists import SetlistsScreen
@@ -74,16 +73,6 @@ def format_device_text(vm: DeviceStateVM) -> str:
     return text
 
 
-
-
-class DeviceScreen(LibrarianScreen):
-    """Placeholder device-mode screen (real content lands in a later task)."""
-
-    TAB_LABEL = "Device"
-    MODE_NAME = "device"
-
-    def body(self) -> ComposeResult:
-        yield Static("Device")
 
 
 class HelixgenTuiApp(App):
