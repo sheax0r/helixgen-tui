@@ -9,12 +9,15 @@ be told to raise DeviceUnreachable on its next call.
 
 from __future__ import annotations
 
+from dataclasses import replace as _replace
+
 from helixgen_tui.core.models import (
     ChainVM,
     DeviceStateVM,
     IrVM,
     MutationPlan,
     OpResult,
+    OutputVM,
     ParamChange,
     SetlistVM,
     ToneVM,
@@ -206,7 +209,7 @@ class FakeEditorPort:
 
     def __init__(self, chains: dict[str, ChainVM] | None = None) -> None:
         self.chains: dict[str, ChainVM] = dict(chains) if chains is not None else {}
-        self.calls: list[tuple[str, list[ParamChange]]] = []
+        self.calls: list[tuple[str, object]] = []
         self.fail_save: bool = False
 
     def get_chain(self, tone_id: str) -> ChainVM | None:
@@ -221,6 +224,14 @@ class FakeEditorPort:
             self.chains[tone_id] = _apply_changes(chain, changes)
         n = len(changes)
         return OpResult(ok=True, message=f"saved {n} change{'s' if n != 1 else ''}")
+
+    def set_output(self, tone_id: str, level: float, pan: float) -> OpResult:
+        pan = max(0.0, min(1.0, float(pan)))
+        self.calls.append(("set_output", (tone_id, float(level), pan)))
+        chain = self.chains.get(tone_id)
+        if chain is not None:
+            self.chains[tone_id] = _replace(chain, output=OutputVM(level=float(level), pan=pan))
+        return OpResult(ok=True, message="saved output")
 
 
 def _apply_changes(chain: ChainVM, changes: list[ParamChange]) -> ChainVM:

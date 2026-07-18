@@ -77,19 +77,19 @@ write) for every new verb.
 **Files:** `core/ports.py`, `core/editor.py`, `tests/fake_core.py`,
 `tests/core/test_editor.py`.
 
-- [ ] Add to `EditorPort` (and the `Core` protocol usage stays via `editor`):
+- [x] Add to `EditorPort` (and the `Core` protocol usage stays via `editor`):
   `set_output(self, tone_id: str, level: float, pan: float) -> OpResult`.
-- [ ] Failing adapter test: `RealEditor.set_output` writes the output level+pan
+- [x] Failing adapter test: `RealEditor.set_output` writes the output level+pan
   into the `.hsp` (assert via re-reading `get_chain().output`); a failure aborts
   before `write_hsp` leaving disk untouched (atomic contract).
-- [ ] Run, confirm fail.
-- [ ] Implement `RealEditor.set_output` over
+- [x] Run, confirm fail.
+- [x] Implement `RealEditor.set_output` over
   `mutate.set_flow_param(body, "output", "level"/"pan", value, ...)`, clamping
   pan to `[0,1]` (mirror the existing param-clamp discipline; `set_param` does
   not clamp). Atomic write.
-- [ ] `FakeEditorPort.set_output` records `("set_output", (tone_id, level, pan))`
+- [x] `FakeEditorPort.set_output` records `("set_output", (tone_id, level, pan))`
   in `.calls` and updates its in-memory output.
-- [ ] Run tests, confirm pass. Commit.
+- [x] Run tests, confirm pass. Commit.
 
 ### Task 3: `set_bypass` verb (bypass / enable toggle)
 

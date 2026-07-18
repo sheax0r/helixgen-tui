@@ -147,6 +147,32 @@ def test_save_params_persists_to_hsp(chain_tone):
     assert val == pytest.approx(0.85)
 
 
+def test_set_output_persists_level_and_pan(chain_tone):
+    editor = RealEditor()
+    result = editor.set_output(chain_tone, level=-6.0, pan=0.75)
+    assert result.ok, result.message
+
+    chain = RealEditor().get_chain(chain_tone)
+    assert chain.output.level == pytest.approx(-6.0)
+    assert chain.output.pan == pytest.approx(0.75)
+
+
+def test_set_output_clamps_pan(chain_tone):
+    editor = RealEditor()
+    assert editor.set_output(chain_tone, level=0.0, pan=1.5).ok
+    assert RealEditor().get_chain(chain_tone).output.pan == pytest.approx(1.0)
+    assert editor.set_output(chain_tone, level=0.0, pan=-0.5).ok
+    assert RealEditor().get_chain(chain_tone).output.pan == pytest.approx(0.0)
+
+
+def test_set_output_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    result = RealEditor().set_output("ghost", level=0.0, pan=0.5)
+    assert not result.ok
+
+
 def test_save_params_empty_is_a_noop_ok(chain_tone):
     assert RealEditor().save_params(chain_tone, []).ok
 

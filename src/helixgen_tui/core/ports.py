@@ -99,6 +99,8 @@ class EditorPort(Protocol):
 
     def save_params(self, tone_id: str, changes: list[ParamChange]) -> OpResult: ...
 
+    def set_output(self, tone_id: str, level: float, pan: float) -> OpResult: ...
+
 
 class DeviceUnreachable(Exception):
     """Raised by DevicePort methods when the device can't be reached."""

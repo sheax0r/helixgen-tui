@@ -260,3 +260,35 @@ class RealEditor:
 
         n = len(changes)
         return OpResult(ok=True, message=f"saved {n} change{'s' if n != 1 else ''}")
+
+    def set_output(self, tone_id: str, level: float, pan: float) -> OpResult:
+        """Write the main-out endpoint's level (dB) and pan to the library
+        ``.hsp``. Pan is clamped to ``[0, 1]`` (mirroring the param-clamp
+        discipline; ``mutate.set_flow_param`` does not clamp). Atomic: builds the
+        body in memory and only writes on full success, so disk stays consistent
+        on any failure."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        pan = max(0.0, min(1.0, float(pan)))
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        try:
+            mutate.set_flow_param(body, "output", "level", float(level))
+            mutate.set_flow_param(body, "output", "pan", pan)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not set output: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="saved output")
