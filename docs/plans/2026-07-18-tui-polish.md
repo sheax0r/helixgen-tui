@@ -85,28 +85,6 @@ match-highlighting, no change to enter behavior.
       README filter/key notes and the `?` help overlay — reword to "fuzzy
       filter" if the old wording is present (`src/helixgen_tui/widgets/help_overlay.py`, `README.md`)
 
-### Task 3: Disable Textual's command palette (#11)
-
-The bindings footer currently exposes Textual's built-in command palette
-(`^p`: theme switch, screenshot, command list) — generic framework/dev
-surface, not part of this librarian product, which has its own `?` help
-overlay and `TabStrip` for discovery. **Decision (conventional default for a
-focused single-purpose TUI): disable it** via the standard
-`ENABLE_COMMAND_PALETTE = False` App attribute. One-line, trivially
-reversible if the product later wants it.
-
-- [ ] Write the failing test first in `tests/test_shell.py` (or a new small
-      test near `tests/test_key_hints.py`): assert
-      `HelixgenTuiApp.ENABLE_COMMAND_PALETTE is False`, and/or a pilot check
-      that pressing `ctrl+p` does not push a command-palette screen.
-- [ ] Run it to confirm it fails (Textual defaults the attribute to `True`)
-- [ ] Implement: set `ENABLE_COMMAND_PALETTE = False` as a class attribute on
-      `HelixgenTuiApp` (`src/helixgen_tui/app.py`, class body near the
-      `MODES`/`BINDINGS` declarations, line ~85)
-- [ ] Run the tests and confirm they pass
-- [ ] No new key advertised; help overlay/README unchanged (this removes a
-      surface rather than adding one)
-
 ## Validation Commands
 
 Run from the repo root:
