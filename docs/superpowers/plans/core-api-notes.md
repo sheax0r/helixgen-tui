@@ -152,3 +152,109 @@ Inspection-only (no doc'd contract — could shift between versions):
 `add_to_setlist` is behavior observed live, not documented — the adapter
 guards before calling, so a future change to raising would still surface as
 `OpResult(ok=False)`.
+
+## Device client surface — `helixgen.device.*` (Task 5, `RealDevicePort`)
+
+Inspected on 2026-07-17 against helixgen 0.26.0 by `pydoc`/`inspect` and by
+running the **offline** helpers under a scratch `$HELIXGEN_HOME` (no device on
+the LAN — the user is playing through the real Helix, so nothing here was ever
+run against hardware; the networked verbs below are signature-verified only).
+
+### IP resolution + device records — `helixgen.device.discovery` / `.observations`
+
+There is **no persisted "device record" object** the way there's a manifest;
+the device's identity/address lives in the per-serial observation files
+(`devices/<serial>.json`) plus discovery.
+
+- `discovery.resolve_ip(explicit=None, *, warn=True) -> str` — the single
+  resolution chain: `explicit` (`--ip`) > `$HELIXGEN_HELIX_IP` > the most
+  recently discovered persisted record (`observations.devices_with_ips()`).
+  **Raises `discovery.IPResolutionError`** *immediately, no network* when none
+  resolves. **Verified offline:** fresh scratch home + unset env -> raises;
+  `observations.devices_with_ips()` -> `[]`. This is the offline-first hinge:
+  `RealDevicePort.probe()` calls `resolve_ip()` and maps `IPResolutionError`
+  -> `DeviceUnreachable`, so build_core() with no device configured is offline
+  without ever opening a socket.
+- `observations.devices_with_ips() -> list[dict]` — recorded devices carrying
+  an IP, newest-`ip_updated_at` first (rows include `serial`/`ip`). Pure
+  local-file read.
+
+### The client — `helixgen.device.HelixClient` (`helixgen.device.client`)
+
+`HelixClient(ip=None, port=2002, *, connect_settle=0.6, rpc_timeout=2.0,
+reconnect_tries=3, reconnect_backoff=0.5)`. Speaks OSC-over-ZeroMQ; `pyzmq`
+and `msgpack` are imported lazily so `import helixgen.device` never fails
+without the `device` extra — **construct/connect** is what would touch the
+network. Usable as a context manager (`with HelixClient(ip, port) as h:`), the
+exact pattern every CLI verb uses. The pair is imported lazily via
+`from helixgen.device import HelixClient, HelixError` (matches
+`cli_device._client()`). `HelixError` is the client-layer failure type;
+`OSError` covers socket failures — `RealDevicePort` treats **both**, plus
+`IPResolutionError`, as `DeviceUnreachable`.
+
+Methods bound (all **network**, signature-verified only — never called here):
+- `connect(verify=True) -> HelixClient` — opens the DEALER socket; with
+  `verify`, confirms a device actually answered (the probe handshake).
+- `product_info() -> dict` — `/ProductInfoGet`: identity/firmware/storage.
+  Keys used: `model`, `helixgen_model`, `serial`, `firmware`,
+  `sd_available_bytes`, `sd_total_bytes` (read with `.get`). Read-only; part of
+  the connect handshake. Backs `probe()` (-> `DeviceStateVM.model`) and `info()`.
+- `active_preset() -> dict` — `{cid, name, posi, slot, ccid}` of the live
+  preset; backs `DeviceStateVM.active_tone` (read `name`).
+- `load_preset(cid) -> bool` — **the load verb** (`device load`). The ONLY
+  place `RealDevicePort` references it, per the Task 5 brief: `make_active`
+  resolves the tone's pool cid then `load_preset(cid)`. Never run in this build.
+- `list_irs(*, strict=False) -> list[dict]` — user IRs `{cid_, name, hash,
+  mono, posi}`; backs `list_device_irs()`.
+- `list_presets(container=Container.POOL, *, strict=False) -> list[dict]` /
+  `resolve_setlist_cid(name)` — translate a tone **name -> pool cid** for
+  `make_active`/`delete_tone` (mirrors the CLI's `_resolve_setlist_dest`).
+- `rename(cid, name) -> bool`, `install_into_pool(blob, name, ...) -> int|None`
+  — back rename/install paths.
+
+### Higher-level verbs (thin delegation targets)
+
+- **sync** — `helixgen.device.setlist_sync.sync_setlists(manifest, *, ip=None,
+  port=None, setlists=None, gc=False, exclude_irs=False, repush=False) -> dict`.
+  The reference-based multi-setlist engine (pool install/update/skip, then
+  reference rebuild). `RealDevicePort.sync_all(gc)` = whole manifest;
+  `sync_setlist(name, gc)` = `setlists=[name]`; `sync_tone(tone_id)` = the
+  setlists that contain the tone (or `OpResult(ok=False)` when it's in none —
+  the engine is setlist-scoped; the only single-tone push is
+  `HelixClient.install_into_pool` + a transcode, which the CLI reaches via the
+  private `_install_hsp_open`; the port stays on the public engine).
+  `plan_sync_all` is built **offline** from the manifest — no client.
+- **IR maintenance** — `helixgen.device.maintenance`:
+  `delete_device_ir(client, name_or_hash, *, ip, ...) -> dict`,
+  `ir_prune(*, ip=None, execute=False, ...) -> dict` (dry-run when
+  `execute=False` — backs `plan_prune_irs`; `execute=True` backs `prune_irs`),
+  `resolve_device_ir_live(client, name_or_hash)`. IR upload:
+  `ir_upload.upload_missing_irs(ip, hashes) -> list[dict]` (backs `push_ir`).
+- **backup/restore** — `helixgen.device.backup.backup_setlist(client,
+  container=POOL, out_dir=None, ...) -> list[dict]` (non-activating
+  `/GetContentData`); `backup.local_list(out_dir=None)` is fully offline.
+  **Gap (documented):** the CLI `device restore INFILE CID` needs a target
+  **cid**, but `DevicePort.restore(file)` carries only a filename.
+  `RealDevicePort` cannot honor that faithfully, so `restore`/`plan_restore`
+  return an `OpResult(ok=False)`/plan explaining a cid target is required — a
+  TUI restore flow that selects the target preset is future work.
+- **locks** — `helixgen.locks.status(ip, token=None) -> list[dict]` is **pure
+  local-file** (`$HELIXGEN_LOCKS`/`~/.helixgen/locks/<ip>/`), no network.
+  **Verified offline:** returns `[]` for an un-held ip. `lock_status()` resolves
+  the ip best-effort (`resolve_ip`, swallowing `IPResolutionError` -> `[]`) and
+  renders each lease dict to a human string. Scope tokens live in
+  `{"editbuffer","library","irs","globals","all"}`.
+
+### Documented-vs-undocumented risk (device)
+
+Well-documented: `discovery.resolve_ip`, `locks.status`,
+`observations.devices_with_ips`, `HelixClient.product_info`/`load_preset`/
+`list_irs`, `setlist_sync.sync_setlists`, `maintenance.*`, `backup.*`.
+
+Inspection-only / risk: `product_info()` and `active_preset()` **key sets**
+(read defensively with `.get`); `list_presets`/`list_irs` **row shapes**
+(`cid_`, `hash`, `posi`); the name->cid resolution the port does for
+`make_active`/`delete_tone` depends on those row keys. The `restore` cid gap is
+a genuine port/CLI contract mismatch, not a version risk. **None of the
+networked calls were executed** — offline correctness (`resolve_ip`,
+`locks.status`, `backup.local_list`) is the only behavior verified live.

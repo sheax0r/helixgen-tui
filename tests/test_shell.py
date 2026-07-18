@@ -8,7 +8,10 @@ async def test_app_starts_on_library_mode():
     async with app.run_test() as pilot:
         assert app.current_mode == "library"
 
-@pytest.mark.parametrize("key,mode", [("1", "library"), ("2", "setlists"), ("3", "irs"), ("4", "device")])
+@pytest.mark.parametrize(
+    "key,mode",
+    [("1", "library"), ("2", "setlists"), ("3", "irs"), ("4", "device")],
+)
 async def test_number_keys_switch_modes(key, mode):
     app = HelixgenTuiApp(FakeCore())
     async with app.run_test() as pilot:
