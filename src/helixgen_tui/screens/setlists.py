@@ -18,6 +18,7 @@ arrives.
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -76,7 +77,7 @@ class AddToneModal(ModalScreen[str | None]):
         table = self.query_one(DataTable)
         table.add_columns("Tone")
         for tone in self._tones:
-            table.add_row(tone.name, key=tone.tone_id)
+            table.add_row(Text(tone.name), key=tone.tone_id)
         table.focus()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -171,7 +172,7 @@ class SetlistsScreen(LibrarianScreen):
         table.clear()
         for setlist in self._setlists:
             glyph = "✓" if setlist.sync_enabled else "○"
-            table.add_row(setlist.name, glyph, key=setlist.name)
+            table.add_row(Text(setlist.name), glyph, key=setlist.name)
 
     def _rebuild_tones_table(self) -> None:
         table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
@@ -182,7 +183,7 @@ class SetlistsScreen(LibrarianScreen):
         for tone_id in self._tone_order.get(setlist.name, []):
             tone = self.app.core.library.get_tone(tone_id)
             name = tone.name if tone is not None else tone_id
-            table.add_row(name, key=tone_id)
+            table.add_row(Text(name), key=tone_id)
 
     @on(DataTable.RowHighlighted, f"#{_SETLIST_TABLE_ID}")
     def _on_setlist_highlighted(self, event: DataTable.RowHighlighted) -> None:

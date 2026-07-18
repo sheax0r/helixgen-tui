@@ -9,6 +9,7 @@ no port call, no modal — and say so in the footer.
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -90,7 +91,12 @@ class LibraryScreen(LibrarianScreen):
         for tone in self._tones:
             if query and query not in tone.name.lower():
                 continue
-            table.add_row(tone.name, tone.guitar or "", _SYNC_GLYPH[tone.sync], key=tone.tone_id)
+            table.add_row(
+                Text(tone.name),
+                Text(tone.guitar or ""),
+                _SYNC_GLYPH[tone.sync],
+                key=tone.tone_id,
+            )
 
     def action_refresh(self) -> None:
         self.refresh_tones()

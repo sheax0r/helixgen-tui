@@ -64,12 +64,12 @@ NOT MODEL DATA (out of scope — no interpolated model strings):
 
 ### Task 2: DataTable cell surfaces
 
-- [ ] Failing pilot tests first (mirror the existing
+- [x] Failing pilot tests first (mirror the existing
       `tests/screens/test_tone_editor.py` bracket tests), per screen, with
       bracket-bearing fixture names (`"Bad [/] name"`, `"[reverb]"`): assert the
       screen stays alive (no MarkupError) AND the literal brackets appear in the
       cell read back via `str(cell)`.
-- [ ] Wrap all identified DataTable cell values (library, setlists incl.
+- [x] Wrap all identified DataTable cell values (library, setlists incl.
       AddToneModal picker, irs local+device, and any signal-flow/chain tables in
       tone_editor) in `rich.text.Text(...)`.
 

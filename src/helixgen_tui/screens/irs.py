@@ -19,6 +19,7 @@ touches a widget or kicks off another device call hops back via
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -137,7 +138,9 @@ class IrsScreen(LibrarianScreen):
         # many IRs sharing one display name (mic/distance variants), and
         # DataTable raises DuplicateKey on a repeated key.
         for index, ir in enumerate(self._local_irs):
-            table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=str(index))
+            table.add_row(
+                Text(ir.name), Text(ir.pack or ""), _short_hash(ir.irhash), key=str(index)
+            )
 
     def action_refresh(self) -> None:
         """`r`: re-read the local pane and re-query the device pane (matching
@@ -197,7 +200,9 @@ class IrsScreen(LibrarianScreen):
         self._device_irs = list(result.value)  # type: ignore[arg-type]
         table.clear()
         for index, ir in enumerate(self._device_irs):
-            table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=str(index))
+            table.add_row(
+                Text(ir.name), Text(ir.pack or ""), _short_hash(ir.irhash), key=str(index)
+            )
         table.display = True
         placeholder.display = False
 

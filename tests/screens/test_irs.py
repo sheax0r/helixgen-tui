@@ -385,3 +385,19 @@ async def test_screen_resume_refreshes_device_pane():
         await pilot.pause()
         device_table = app.screen.query_one("#irs-device-table", DataTable)
         assert device_table.row_count == 2
+
+
+async def test_bracketed_ir_names_render_literally_no_crash():
+    """Markup regression (#12): local and device IR names/packs carrying
+    brackets must render verbatim in the DataTable cells, never crash."""
+    local = [IrVM(name="Bad [/] IR", pack="[reverb]", irhash="deadbeefcafef00d", on_device=None)]
+    device = [IrVM(name="Dev [x] IR", pack=None, irhash="deadbeefcafef00d", on_device=True)]
+    app, port = _app(device_irs=device, local_irs=local)
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert str(local_table.get_cell_at((0, 0))) == "Bad [/] IR"
+        assert str(local_table.get_cell_at((0, 1))) == "[reverb]"
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert str(device_table.get_cell_at((0, 0))) == "Dev [x] IR"
