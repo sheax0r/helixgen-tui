@@ -31,8 +31,6 @@ _SYNC_GLYPH = {
 _FILTER_ID = "library-filter"
 _TABLE_ID = "library-table"
 
-_OFFLINE_MSG = "device offline — connect on the Device tab (4) first"
-
 
 class ActivateToneRequested(Message):
     """Screen-internal hand-off: launch the make-active worker on the UI thread.
@@ -164,15 +162,6 @@ class LibraryScreen(LibrarianScreen):
             return None
         row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
         return self.app.core.library.get_tone(row_key.value)
-
-    def _offline(self) -> bool:
-        """True (and reports it to the footer) when no device is connected —
-        the actions refuse here without ever touching the port."""
-        service = self.app.device_service
-        if service is None or service.state.status != "connected":
-            self.app.report_op(OpResult(ok=False, message=_OFFLINE_MSG))
-            return True
-        return False
 
     def _activate(self, tone_id: str) -> None:
         """Launch the make-active worker. Always called on the UI thread (a key

@@ -340,3 +340,57 @@ async def test_empty_setlists_renders_with_no_rows_and_no_crash():
         await pilot.press("S")
         await pilot.pause()
         assert isinstance(app.screen, SetlistsScreen)
+
+
+# --- real thread-worker spawn: the class of bug the fix addresses ----------
+
+
+async def _wait_until(pilot, cond, timeout=3.0):
+    """Pump the event loop until ``cond()`` holds (or fail after ``timeout``)."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        if cond():
+            return
+    raise AssertionError("condition not met within timeout")
+
+
+async def test_capital_a_under_real_thread_spawn_shows_plan_lines_verbatim():
+    """``action_sync_all``'s plan read must marshal the ConfirmModal open back
+    to the UI thread: under the REAL Textual thread-worker spawn,
+    DeviceService.query's ``done`` callback runs off-thread, so pushing a
+    modal directly from there would corrupt Textual's UI state instead of
+    just failing a synchronous-spawn test."""
+
+    class PlanPort(FakeDevicePort):
+        def plan_sync_all(self, gc: bool):
+            from helixgen_tui.core.models import MutationPlan
+
+            return MutationPlan(
+                title="Sync all setlists?",
+                lines=("Gig 1 -> 2 tones", "Gig 2 -> 0 tones"),
+            )
+
+    port = PlanPort(state=_CONNECTED)
+    core = FakeCore(tones=list(_TONES), setlists=list(_SETLISTS), device=port)
+    app = HelixgenTuiApp(core)  # default (real Textual thread-worker) spawn
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await _wait_until(
+            pilot,
+            lambda: (
+                app.device_service is not None and app.device_service.state.status == "connected"
+            ),
+        )
+
+        await pilot.press("A")
+        await _wait_until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+
+        modal_text = "\n".join(str(w.render()) for w in app.screen.query("Static"))
+        assert "Gig 1 -> 2 tones" in modal_text
+        assert "Gig 2 -> 0 tones" in modal_text
+
+        await pilot.press("y")
+        await _wait_until(pilot, lambda: ("sync_all", (False,)) in port.calls)

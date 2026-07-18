@@ -37,7 +37,6 @@ _DEVICE_TABLE_ID = "irs-device-table"
 _DEVICE_PLACEHOLDER_ID = "irs-device-placeholder"
 _RENAME_INPUT_ID = "irs-rename-input"
 
-_OFFLINE_MSG = "device offline — connect on the Device tab (4) first"
 _DEVICE_PLACEHOLDER_TEXT = "unavailable — device offline"
 
 
@@ -192,16 +191,7 @@ class IrsScreen(LibrarianScreen):
         row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
         return next((ir for ir in self._device_irs if ir.name == row_key.value), None)
 
-    # -- offline guard ---------------------------------------------------------
-
-    def _offline(self) -> bool:
-        """True (and reports it to the footer) when no device is connected —
-        the actions refuse here without ever touching the port."""
-        service = self.app.device_service
-        if service is None or service.state.status != "connected":
-            self.app.report_op(OpResult(ok=False, message=_OFFLINE_MSG))
-            return True
-        return False
+    # -- offline guard is inherited from LibrarianScreen._offline ----------
 
     def _after_mutation(self, result: OpResult) -> None:
         """`DeviceService.run`'s done callback for push/delete/prune/rename —
