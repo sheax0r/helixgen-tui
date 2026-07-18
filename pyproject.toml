@@ -1,6 +1,6 @@
 [project]
 name = "helixgen-tui"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Terminal UI for helixgen: tone library, setlists, and Line 6 Helix Stadium device control."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,7 +10,7 @@ authors = [
 ]
 keywords = ["line6", "helix", "guitar", "preset", "tone", "tui", "terminal"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",

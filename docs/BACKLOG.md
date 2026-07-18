@@ -5,12 +5,14 @@ backlog #29 (helixgen-tui), which carries the product mandate: cover
 everything the Stadium desktop app does, slots invisible, own design spec
 before any code.
 
-- ✅ **#1 Design spec** — shipped 2026-07-17:
-  `docs/superpowers/specs/2026-07-17-tui-v1-librarian-design.md`. All open
-  questions settled with the user (Textual; tabbed screens; offline-first;
-  tiered mutation confirmation; direct Python API behind the
-  `helixgen_tui.core` adapter; layered fake-core + Pilot testing).
-  Implementation plan is the next step.
+- ✅ **#1 Design spec + v1 librarian** — shipped 2026-07-17:
+  `docs/superpowers/specs/2026-07-17-tui-v1-librarian-design.md` and its
+  8-task implementation plan
+  (`docs/superpowers/plans/2026-07-17-tui-v1-librarian.md`), both fully
+  built: Textual shell, tabbed Library/Setlists/IRs/Device screens,
+  offline-first device handling, tiered mutation confirmation, direct Python
+  API behind the `helixgen_tui.core` adapter, layered fake-core + Pilot
+  testing. Released as `v0.1.0`.
 - ✅ **#2 Packaging + CI skeleton** — shipped 2026-07-17 (PR #1): pyproject
   (`helixgen-tui`, `helixgen[device]>=0.26`), console script + `-m` entry,
   pytest + ruff CI, publish workflow.
@@ -26,3 +28,11 @@ before any code.
   D4-modal permission bridging, graceful degradation, library refresh) are
   settled in the v1 design spec's "first post-v1 screen" section; binding
   choice (Agent SDK vs headless CLI) deferred to build time.
+- **#5 Live smoke suite (`HELIXGEN_TUI_LIVE=1`)** — deferred per spec D6;
+  validate `RealDevicePort` verbs on hardware. The v1 build's device tests
+  are entirely `FakeDevicePort`-driven (no real hardware in CI or dev); this
+  entry tracks writing an opt-in, env-gated suite that exercises the real
+  port's per-verb delegations against an actual Helix Stadium.
+- **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
+  push** — `RealDevicePort` returns `ok=False` for these; the engine change
+  lands in helixgen-core first (ref #3's stable-API ask).

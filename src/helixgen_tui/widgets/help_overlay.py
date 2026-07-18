@@ -11,13 +11,41 @@ from textual.widgets import Static
 HELP_TEXT = """\
 helixgen-tui — key bindings
 
-  1        Library
-  2        Setlists
-  3        IRs
-  4        Device
-  ?        Show this help
-  q        Quit
-  escape   Close this help
+  Global
+    1        Library
+    2        Setlists
+    3        IRs
+    4        Device
+    ?        Show this help
+    q        Quit
+    escape   Close a modal / clear a filter
+
+  Library
+    enter    Open tone detail
+    a        Make active (installs first if local-only)
+    s        Sync tone to device
+    r        Refresh
+    /        Filter by name
+
+  Setlists
+    a        Add tone to setlist
+    d        Remove selected tone
+    J        Move tone down
+    K        Move tone up
+    S        Sync selected setlist
+    A        Sync all setlists
+
+  IRs
+    p        Push selected local IR to device
+    R        Rename device IR
+    d        Delete device IR
+    P        Prune device IRs
+
+  Device
+    b        Backup
+    t        Restore from file
+    l        Show lock status
+    r        Retry connect
 """
 
 
