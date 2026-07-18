@@ -53,24 +53,24 @@ write) for every new verb.
 `src/helixgen_tui/core/editor.py`, `tests/fake_core.py`,
 `tests/core/test_editor.py`.
 
-- [ ] Add frozen VMs to `core/models.py` matching existing conventions
+- [x] Add frozen VMs to `core/models.py` matching existing conventions
   (`@dataclass(frozen=True, slots=True)`, `str | None`, `tuple[...]`):
   `OutputVM(level: float, pan: float)` and an input source representation
   (add `output: OutputVM | None` and `input_source: str | None` — one of
   `"inst1"|"inst2"|"both"|"none"` — to `ChainVM`). Default to `None` so existing
   callers/tests stay valid.
-- [ ] Write the failing adapter test in `tests/core/test_editor.py`: loading a
+- [x] Write the failing adapter test in `tests/core/test_editor.py`: loading a
   fixture tone's chain via `RealEditor.get_chain` returns a populated
   `output` (level+pan) and `input_source`. (Reuse/extend the existing editor
   fixture `.hsp`.)
-- [ ] Run it, confirm it fails for the expected reason.
-- [ ] Implement: in `RealEditor.get_chain`, read output level/pan and input
+- [x] Run it, confirm it fails for the expected reason.
+- [x] Implement: in `RealEditor.get_chain`, read output level/pan and input
   source from the loaded `.hsp` via the `helixgen` view/output/input helpers and
   populate the new fields. No screen change yet.
-- [ ] Extend `FakeEditorPort` so its in-memory `ChainVM` carries `output` and
+- [x] Extend `FakeEditorPort` so its in-memory `ChainVM` carries `output` and
   `input_source`, seedable per test.
-- [ ] Run tests, confirm pass.
-- [ ] Commit.
+- [x] Run tests, confirm pass.
+- [x] Commit.
 
 ### Task 2: `set_output` verb (output pan/level write)
 

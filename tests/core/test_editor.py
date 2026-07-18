@@ -42,7 +42,9 @@ def _body():
                     "b04": {"type": "amp", "position": 4, "path": 0, "@enabled": _wrapped(False),
                             "slot": [_slot(_AMP, {"Drive": 0.60, "Bass": 0.50}, enabled=False)]},
                     "b13": {"type": "output", "position": 13, "path": 0,
-                            "slot": [{"model": "P35_OutputMatrix", "params": {}, "version": 0}]},
+                            "slot": [{"model": "P35_OutputMatrix",
+                                      "params": {"gain": _wrapped(3.0), "pan": _wrapped(0.25)},
+                                      "version": 0}]},
                 }
             ]
         },
@@ -113,6 +115,17 @@ def test_get_chain_lists_blocks_and_params(chain_tone):
 
     amp = blocks[1]
     assert amp.enabled is False  # bypassed block surfaces its state
+
+
+def test_get_chain_exposes_output_and_input_source(chain_tone):
+    chain = RealEditor().get_chain(chain_tone)
+    assert chain is not None
+    # output endpoint: main-out level (dB) + pan read from the .hsp
+    assert chain.output is not None
+    assert chain.output.level == pytest.approx(3.0)
+    assert chain.output.pan == pytest.approx(0.25)
+    # input head node: the instrument source
+    assert chain.input_source == "inst1"
 
 
 def test_get_chain_returns_none_for_unknown_tone(chain_tone):

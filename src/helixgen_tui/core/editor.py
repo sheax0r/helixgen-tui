@@ -25,6 +25,7 @@ from helixgen_tui.core.models import (
     BlockVM,
     ChainVM,
     OpResult,
+    OutputVM,
     ParamChange,
     ParamVM,
     PathVM,
@@ -86,6 +87,61 @@ class RealEditor:
         except Exception:
             return {}
         return getattr(block, "params", {}) or {}
+
+    @staticmethod
+    def _unwrap(wrapped):
+        """Unwrap a ``.hsp`` param value (``{"value": x}`` / stereo / plain)."""
+        if not isinstance(wrapped, dict):
+            return wrapped
+        if "value" in wrapped:
+            return wrapped["value"]
+        one = wrapped.get("1")
+        if isinstance(one, dict) and "value" in one:
+            return one["value"]
+        return wrapped
+
+    @classmethod
+    def _read_output(cls, body: dict) -> OutputVM | None:
+        """The terminal main-out endpoint's level (dB) + pan, read from the
+        lane-0 ``b13`` output slot, falling back to the device defaults for any
+        param the export omits. ``None`` when no output endpoint is present."""
+        from helixgen.mutate import flowparams
+
+        flow = (body.get("preset") or {}).get("flow") or []
+        for path_dict in flow:
+            if not isinstance(path_dict, dict):
+                continue
+            b13 = path_dict.get("b13")
+            if not (isinstance(b13, dict) and b13.get("type") == "output" and b13.get("slot")):
+                continue
+            params = b13["slot"][0].get("params") or {}
+            defaults = flowparams.OUTPUT_HSP_DEFAULTS
+            gain = cls._unwrap(params.get("gain")) if "gain" in params else defaults["gain"]
+            pan = cls._unwrap(params.get("pan")) if "pan" in params else defaults["pan"]
+            if not isinstance(gain, (int, float)):
+                gain = defaults["gain"]
+            if not isinstance(pan, (int, float)):
+                pan = defaults["pan"]
+            return OutputVM(level=float(gain), pan=float(pan))
+        return None
+
+    @staticmethod
+    def _read_input_source(body: dict) -> str | None:
+        """The head-node instrument source (``inst1``/``inst2``/``both``/``none``)
+        from the lane-0 ``b00`` input model. ``None`` when not determinable."""
+        from helixgen import controllers
+
+        device_id = (body.get("meta") or {}).get("device_id") or "stadium_xl"
+        flow = (body.get("preset") or {}).get("flow") or []
+        for path_dict in flow:
+            if not isinstance(path_dict, dict):
+                continue
+            b00 = path_dict.get("b00")
+            if not (isinstance(b00, dict) and b00.get("slot")):
+                continue
+            model = b00["slot"][0].get("model", "")
+            return controllers.input_mode_for_model(device_id, model)
+        return None
 
     @staticmethod
     def _display_name(lib, model: str) -> str:
@@ -157,6 +213,8 @@ class RealEditor:
             description=description,
             setlists=setlists,
             paths=paths,
+            output=self._read_output(body),
+            input_source=self._read_input_source(body),
         )
 
     # -- writes ------------------------------------------------------------

@@ -260,6 +260,8 @@ def _apply_changes(chain: ChainVM, changes: list[ParamChange]) -> ChainVM:
         description=chain.description,
         setlists=chain.setlists,
         paths=new_paths,
+        output=chain.output,
+        input_source=chain.input_source,
     )
 
 
