@@ -140,7 +140,7 @@ write) for every new verb.
 `tests/screens/test_tone_editor.py` (and `tests/test_boundaries.py` /
 `tests/test_shell.py` only if they enumerate editor internals).
 
-- [ ] Failing pilot test: opening the editor on a fake tone renders a
+- [x] Failing pilot test: opening the editor on a fake tone renders a
   **horizontal** chain surface (left-to-right, one row per lane, both DSP paths
   stacked when present, split/join drawn with `+`/`-` connectors), with the
   input source shown as the head node and the output (level/pan) as the terminal
@@ -148,15 +148,15 @@ write) for every new verb.
   lanes+paths with the nav keys. Assert the rendered chain contains the fake's
   block displays and the output/input nodes, and that cursor movement changes the
   selected block feeding the params inspector.
-- [ ] Run, confirm fail.
-- [ ] Implement the horizontal render as the block-selection surface (the
+- [x] Run, confirm fail.
+- [x] Implement the horizontal render as the block-selection surface (the
   primary navigator; keep the params inspector, dirty tracking, save, and
   confirm-discard from v0.2.0). All block/model/param/output text rendered
   markup-safe (`rich.text.Text` / `markup=False`, per backlog #12). Chain wider
   than the pane scrolls horizontally. Selecting the output node shows its
   pan/level in the inspector; selecting the input node shows the source
   read-only.
-- [ ] Run tests, confirm pass. Commit.
+- [x] Run tests, confirm pass. Commit.
 
 ### Task 6: Structural + output actions wired to the screen
 

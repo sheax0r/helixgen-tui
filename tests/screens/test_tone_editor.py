@@ -9,6 +9,7 @@ from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.models import (
     BlockVM,
     ChainVM,
+    OutputVM,
     ParamVM,
     PathVM,
     SyncState,
@@ -49,6 +50,37 @@ def _chain(tone_id="tone-1"):
         description="Boost [reverb] then [b]bright[/b]",
         setlists=("Gig 1",),
         paths=(PathVM(path=0, blocks=(drive, amp)),),
+        output=OutputVM(level=-3.0, pan=0.5),
+        input_source="both",
+    )
+
+
+def _parallel_chain(tone_id="tone-1"):
+    top = BlockVM(
+        model="TopMod",
+        display="Top Block",
+        position=1,
+        path=0,
+        enabled=True,
+        params=(ParamVM(name="TopP", value=0.10, type="float", default=0.5),),
+    )
+    bottom = BlockVM(
+        model="BotMod",
+        display="Bot Block",
+        position=1,
+        path=1,
+        enabled=True,
+        params=(ParamVM(name="BotP", value=0.20, type="float", default=0.5),),
+    )
+    return ChainVM(
+        tone_id=tone_id,
+        name="Parallel Tone",
+        guitar=None,
+        description=None,
+        setlists=(),
+        paths=(PathVM(path=0, blocks=(top,)), PathVM(path=1, blocks=(bottom,))),
+        output=OutputVM(level=0.0, pan=0.5),
+        input_source="both",
     )
 
 
@@ -78,12 +110,8 @@ def _params_cells(app):
     ]
 
 
-def _blocks_cells(app):
-    table = app.screen.query_one("#editor-blocks", DataTable)
-    return [
-        tuple(str(table.get_cell_at((r, c))) for c in range(len(table.columns)))
-        for r in range(table.row_count)
-    ]
+def _chain_text(app):
+    return str(app.screen.query_one("#editor-chain", Static).render())
 
 
 async def test_enter_from_library_opens_editor_with_chain():
@@ -91,14 +119,77 @@ async def test_enter_from_library_opens_editor_with_chain():
     async with app.run_test() as pilot:
         await pilot.press("enter")
         assert isinstance(app.screen, ToneEditorScreen)
-        blocks = _blocks_cells(app)
-        # both blocks listed, grouped by path, with model + pos + state
-        assert any("Scream 808" in row[1] and row[0] == "0" for row in blocks)
-        assert any("Brit 2204" in row[1] and "bypass" in row[3] for row in blocks)
+        text = _chain_text(app)
+        # both blocks rendered horizontally, with the input + output nodes
+        assert "Scream 808" in text
+        assert "Brit 2204" in text
+        assert "byp" in text  # amp is bypassed
+        assert "IN:both" in text  # input head node
+        assert "OUT" in text  # output terminal node
         # params of the first-selected block are shown
         pcells = _params_cells(app)
         names = [n for n, _ in pcells]
         assert "Drive" in names and "Gate" in names
+
+
+async def test_chain_renders_horizontally_with_io_nodes():
+    app = _app()
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        text = _chain_text(app)
+        # left-to-right order: input, then blocks, then output
+        assert text.index("IN:both") < text.index("Scream 808")
+        assert text.index("Scream 808") < text.index("Brit 2204")
+        assert text.index("Brit 2204") < text.index("OUT")
+        # output node carries level + pan
+        assert "L-3.0" in text and "P0.50" in text
+
+
+async def test_chain_navigation_moves_selection_and_updates_params():
+    app = _app()
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        # cursor starts on the first block -> its params in the inspector
+        assert "Drive" in [n for n, _ in _params_cells(app)]
+        # right -> amp (Brit 2204) -> only its param (Bass)
+        await pilot.press("right")
+        assert [n for n, _ in _params_cells(app)] == ["Bass"]
+        # right -> output node -> inspector shows level/pan read-only
+        await pilot.press("right")
+        pnames = [n for n, _ in _params_cells(app)]
+        assert "Level" in pnames and "Pan" in pnames
+        # right again clamps at the output terminal
+        await pilot.press("right")
+        assert [n for n, _ in _params_cells(app)] == ["Level", "Pan"]
+        # walk back left: output -> amp -> drive -> input head node
+        await pilot.press("left")
+        assert [n for n, _ in _params_cells(app)] == ["Bass"]
+        await pilot.press("left")
+        assert "Drive" in [n for n, _ in _params_cells(app)]
+        await pilot.press("left")
+        assert [n for n, _ in _params_cells(app)] == ["Source"]
+        # left clamps at the input head node
+        await pilot.press("left")
+        assert [n for n, _ in _params_cells(app)] == ["Source"]
+
+
+async def test_multi_lane_render_and_vertical_navigation():
+    app = _app(_parallel_chain())
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        text = _chain_text(app)
+        # both DSP paths are stacked on separate rows
+        assert "Top Block" in text and "Bot Block" in text
+        assert "\n" in text
+        # split/join connectors drawn for a parallel-routed tone
+        assert "+" in text
+        # cursor starts on lane 0 -> its param
+        assert [n for n, _ in _params_cells(app)] == ["TopP"]
+        # down moves across lanes to the second path
+        await pilot.press("down")
+        assert [n for n, _ in _params_cells(app)] == ["BotP"]
+        await pilot.press("up")
+        assert [n for n, _ in _params_cells(app)] == ["TopP"]
 
 
 async def test_float_nudge_changes_by_step_and_clamps():
@@ -277,8 +368,7 @@ async def test_bracketed_param_and_block_text_render_literally():
     async with app.run_test() as pilot:
         await pilot.press("enter")
         assert isinstance(app.screen, ToneEditorScreen)
-        blocks = _blocks_cells(app)
-        assert any("Weird [/] Model" in row[1] for row in blocks)
+        assert "Weird [/] Model" in _chain_text(app)
         pcells = _params_cells(app)
         assert ("Odd [x]", "a[b]c") in pcells
         header = str(app.screen.query_one("#editor-header", Static).render())
@@ -349,18 +439,16 @@ async def test_long_description_does_not_crowd_out_the_tables():
         assert isinstance(app.screen, ToneEditorScreen)
 
         header = app.screen.query_one("#editor-header", Static)
-        blocks = app.screen.query_one("#editor-blocks", DataTable)
         params = app.screen.query_one("#editor-params", DataTable)
 
         # Header is bounded — it must not expand to render the whole description.
         assert header.outer_size.height <= 6
 
-        # The tables keep real height instead of collapsing to ~0 below the fold.
-        assert blocks.outer_size.height >= 5
+        # The params inspector keeps real height instead of collapsing to ~0.
         assert params.outer_size.height >= 5
 
         # And the data is actually there.
-        assert any("Scream 808" in row[1] for row in _blocks_cells(app))
+        assert "Scream 808" in _chain_text(app)
         assert "Drive" in [n for n, _ in _params_cells(app)]
 
         # The description is compacted to a single line: the later-paragraph
