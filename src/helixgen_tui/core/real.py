@@ -145,40 +145,76 @@ class RealDevicePort:
 
         return self._op("make_active", _run)
 
-    def _setlists_with_tone(self, tone_id: str) -> list[str]:
+    def _synced_setlists_with_tone(self, tone_id: str) -> list[str]:
+        """The setlists that contain ``tone_id`` AND are already opted into
+        mirroring (``synced=True``).
+
+        A *targeted* ``sync_setlists`` call flips its named setlists to
+        ``synced`` as a side effect (core's opt-in gesture), so syncing a tone
+        via a draft setlist would silently enable mirroring on it. Restricting
+        to already-synced setlists keeps that opt-in an explicit Setlists-screen
+        action."""
         from helixgen.device.manifest import SetlistManifest
 
         manifest = SetlistManifest.load()
-        return [s for s in manifest.setlists() if tone_id in manifest.tones_in(s)]
+        return [
+            s
+            for s in manifest.setlists()
+            if tone_id in manifest.tones_in(s) and manifest.is_synced(s)
+        ]
 
-    def _sync(self, setlists: list[str] | None, gc: bool, ok_msg: str) -> OpResult:
+    @staticmethod
+    def _summarize_sync_report(report: dict, label: str) -> OpResult:
+        """Fold ``setlist_sync.sync_setlists``'s report into an OpResult.
+
+        The report's shape (helixgen 0.26) is
+        ``{ok, pool:{installed,updated,skipped,...}, errors:[...], ...}`` with
+        per-tone install/update/IR failures accumulated in ``errors`` (``ok`` is
+        ``not errors``). We surface the four bucket counts the user cares about
+        and fail the op (``ok=False``) whenever anything failed — previously the
+        whole report was discarded and every sync reported a bare success."""
+        pool = report.get("pool") or {}
+        installed = len(pool.get("installed") or [])
+        updated = len(pool.get("updated") or [])
+        skipped = len(pool.get("skipped") or [])
+        failed = len(report.get("errors") or [])
+        summary = (
+            f"{installed} installed, {updated} updated, "
+            f"{skipped} skipped, {failed} failed"
+        )
+        return OpResult(ok=failed == 0, message=f"{label} — {summary}")
+
+    def _sync(self, setlists: list[str] | None, gc: bool, label: str) -> OpResult:
         def _run() -> OpResult:
             from helixgen.device import setlist_sync
             from helixgen.device.manifest import SetlistManifest
 
             ip = self._resolve_ip()
             manifest = SetlistManifest.load()
-            setlist_sync.sync_setlists(
+            report = setlist_sync.sync_setlists(
                 manifest, ip=ip, port=self._port, setlists=setlists, gc=gc
             )
-            return OpResult(ok=True, message=ok_msg)
+            return self._summarize_sync_report(report, label)
 
         return self._op("sync", _run)
 
     def sync_tone(self, tone_id: str) -> OpResult:
-        setlists = self._setlists_with_tone(tone_id)
+        setlists = self._synced_setlists_with_tone(tone_id)
         if not setlists:
             return OpResult(
                 ok=False,
-                message=f"{tone_id!r} is in no setlist — add it to one, then sync",
+                message=(
+                    f"{tone_id!r} is in no synced setlist — sync a setlist from "
+                    f"the Setlists screen"
+                ),
             )
-        return self._sync(setlists, gc=False, ok_msg=f"synced {tone_id!r}")
+        return self._sync(setlists, gc=False, label=f"synced {tone_id!r}")
 
     def sync_setlist(self, name: str, gc: bool) -> OpResult:
-        return self._sync([name], gc=gc, ok_msg=f"synced setlist {name!r}")
+        return self._sync([name], gc=gc, label=f"synced setlist {name!r}")
 
     def sync_all(self, gc: bool) -> OpResult:
-        return self._sync(None, gc=gc, ok_msg="synced all setlists")
+        return self._sync(None, gc=gc, label="synced all setlists")
 
     def plan_sync_all(self, gc: bool) -> MutationPlan:
         from helixgen.device.manifest import SetlistManifest
@@ -214,6 +250,27 @@ class RealDevicePort:
 
     # -- IRs (device-side) -------------------------------------------------
 
+    @staticmethod
+    def _resolve_ir_hash(mapping, ir_name: str) -> str | None:
+        """The registered IR hash for ``ir_name``, matching (in preference order)
+        the mapping's hash key, a registered file's basename, or its stem.
+
+        The screen sends ``IrVM.name`` — a *stem* (``Path(wav).stem``, no
+        extension) — but ``IrMapping.resolve_by_basename`` compares against the
+        full ``os.path.basename`` (with extension), so a stem never matched and
+        every push failed. Resolving here across all three keys (hash first)
+        fixes that without changing the port signature."""
+        import os
+
+        entries = mapping.entries
+        if ir_name in entries:  # already an irhash — prefer it
+            return ir_name
+        for irhash, wav_path in entries.items():
+            basename = os.path.basename(str(wav_path))
+            if basename == ir_name or os.path.splitext(basename)[0] == ir_name:
+                return irhash
+        return None
+
     def push_ir(self, ir_name: str) -> OpResult:
         def _run() -> OpResult:
             from helixgen.device import ir_upload
@@ -221,7 +278,9 @@ class RealDevicePort:
 
             ip = self._resolve_ip()
             mapping = IrMapping.load()
-            irhash, _ = mapping.resolve_by_basename(ir_name)
+            irhash = self._resolve_ir_hash(mapping, ir_name)
+            if irhash is None:
+                return OpResult(ok=False, message=f"no registered IR named {ir_name!r}")
             results = ir_upload.upload_missing_irs(ip, [irhash])
             ok = all(r.get("outcome") != "upload_error" for r in results)
             msg = f"pushed IR {ir_name!r}" if ok else f"IR {ir_name!r} upload failed"

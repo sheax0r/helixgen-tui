@@ -373,3 +373,30 @@ async def test_chained_install_then_activate_under_real_thread_spawn():
         await _wait_until(pilot, lambda: app.last_action == "make_active ok")
         footer = app.screen.query_one(StatusFooter)
         assert "make_active ok" in footer.last_action
+
+
+# --- Fix 4: refresh on screen-resume (singleton mode screens) --------------
+
+
+async def test_screen_resume_refreshes_library():
+    core = _core()
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 3
+        await pilot.press("2")  # away to setlists
+        await pilot.pause()
+        core.library.tones.append(
+            ToneVM(
+                name="New On Resume",
+                tone_id="tone-r",
+                guitar=None,
+                description=None,
+                sync=SyncState.SYNCED,
+                setlists=(),
+            )
+        )
+        await pilot.press("1")  # back to library — on_screen_resume re-reads
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 4

@@ -122,6 +122,7 @@ class SetlistsScreen(LibrarianScreen):
     """
 
     BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
         Binding("a", "add_tone", "Add tone"),
         Binding("d", "remove_tone", "Remove tone"),
         Binding("J", "move_down", "Move down"),
@@ -156,6 +157,14 @@ class SetlistsScreen(LibrarianScreen):
         self._tone_order = {sl.name: list(sl.tones) for sl in self._setlists}
         self._rebuild_setlist_table()
         self._rebuild_tones_table()
+
+    def action_refresh(self) -> None:
+        self.refresh_setlists()
+
+    def on_screen_resume(self) -> None:
+        """Re-read on every return to this (singleton) mode screen — on_mount
+        fires once, so a setlist added elsewhere would otherwise stay hidden."""
+        self.refresh_setlists()
 
     def _rebuild_setlist_table(self) -> None:
         table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)

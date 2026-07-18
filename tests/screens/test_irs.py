@@ -329,3 +329,59 @@ async def test_push_under_real_thread_spawn_refreshes_device_pane_without_crashi
         # without crashing, leaving the (still-connected) device pane intact.
         assert device_table.display is True
         assert device_table.row_count == 1
+
+
+# --- Fix 4: r refresh binding + refresh on screen-resume --------------------
+
+
+async def test_r_refreshes_local_irs():
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 2
+        app.core.local_irs.append(
+            IrVM(name="New Local IR", pack=None, irhash="abcd1234abcd1234", on_device=None)
+        )
+        local_table.focus()
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert local_table.row_count == 3
+
+
+async def test_screen_resume_refreshes_local_pane():
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 2
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        app.core.local_irs.append(
+            IrVM(name="New Local IR", pack=None, irhash="abcd1234abcd1234", on_device=None)
+        )
+        await pilot.press("3")  # back — on_screen_resume re-reads
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 3
+
+
+async def test_screen_resume_refreshes_device_pane():
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert device_table.row_count == 1
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        port.device_irs.append(
+            IrVM(name="Greenback", pack=None, irhash="0123456789abcdef", on_device=True)
+        )
+        await pilot.press("3")  # back — on_screen_resume re-queries the device pane
+        await pilot.pause()
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert device_table.row_count == 2

@@ -15,20 +15,10 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
+    # Imports are deferred past the `--version` fast path so it never has to
+    # construct the app or import the (heavier) real Core wiring.
     from helixgen_tui.app import HelixgenTuiApp
-
-    # `build_core()` lives in helixgen_tui.core.real, which wires the ports up
-    # to the real helixgen library/device. It's built by a task that may not
-    # have merged yet, so the import is deferred to here (never at module
-    # import time) and given a clear error if it's still missing.
-    try:
-        from helixgen_tui.core.real import build_core
-    except ImportError as exc:
-        raise ImportError(
-            "helixgen_tui.core.real.build_core is unavailable — the real Core "
-            "adapters haven't landed yet. Cannot launch helixgen-tui without "
-            "a Core implementation."
-        ) from exc
+    from helixgen_tui.core.real import build_core
 
     HelixgenTuiApp(build_core()).run()
     return 0

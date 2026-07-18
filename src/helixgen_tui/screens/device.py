@@ -129,6 +129,12 @@ class DeviceScreen(LibrarianScreen):
         super().on_mount()  # seed the footer from the app's current device state
         self._refresh_info()
 
+    def on_screen_resume(self) -> None:
+        """Re-read device info on every return to this (singleton) mode screen —
+        on_mount fires once, so a state/info change while another tab was active
+        would otherwise leave a stale panel."""
+        self._refresh_info()
+
     # -- state helpers -------------------------------------------------------
 
     def _connected(self) -> bool:
