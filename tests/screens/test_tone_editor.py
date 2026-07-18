@@ -544,6 +544,43 @@ async def test_bypass_records_flipped_enabled():
         assert enabled is False  # was enabled, toggled to bypassed
 
 
+async def test_bypass_refused_while_dirty_preserves_edit():
+    # A structural write persists immediately and reloads the chain, dropping the
+    # in-memory param working set. While dirty the verb must refuse, not silently
+    # discard the unsaved edit.
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # Scream 808 selected
+        await pilot.press("tab")  # params pane
+        await pilot.press("right")  # nudge Drive -> dirty
+        assert app.screen.is_dirty
+        await pilot.press("b")  # bypass refused while dirty
+        await pilot.pause()
+        assert [c for c in editor.calls if c[0] == "set_bypass"] == []
+        assert app.screen.is_dirty  # unsaved edit preserved
+        assert "save or discard" in app.last_action.lower()
+
+
+async def test_add_refused_while_dirty_does_not_open_picker():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # first block selected
+        await pilot.press("tab")  # params pane
+        await pilot.press("right")  # nudge Drive -> dirty
+        assert app.screen.is_dirty
+        await pilot.press("a")  # add refused while dirty
+        from helixgen_tui.widgets.block_picker_modal import BlockPickerModal
+
+        assert not isinstance(app.screen, BlockPickerModal)  # picker never opened
+        assert [c for c in editor.calls if c[0] == "add_block"] == []
+        assert app.screen.is_dirty
+        assert "save or discard" in app.last_action.lower()
+
+
 async def test_swap_model_records():
     editor = FakeEditorPort(chains={"tone-1": _chain()})
     core = FakeCore(tones=list(_TONES), editor=editor)

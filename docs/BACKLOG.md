@@ -127,19 +127,26 @@ using a `[/]`- and `[reverb]`-bearing fixture.
 
 ## 13. Full chain management (from tone param editor v1, 2026-07-18)
 
-The tone param editor (`ToneEditorScreen`, v0.2.0) edits **values on existing
-blocks only**. Structural chain editing is out of scope for v1 and deferred here:
+The tone param editor (`ToneEditorScreen`, v0.2.0) edited **values on existing
+blocks only**. Signal-flow editing (this branch, 2026-07-18, plan
+`docs/plans/2026-07-18-signal-flow-editor.md`) shipped part of the structural
+scope; the rest stays deferred here:
 
-- **Add / remove / swap blocks.** Core already exposes these via `helixgen.mutate`
-  (add/remove/swap verbs), so the TUI side is a new screen affordance over an
-  existing engine surface — feasible without a core change.
-- **Reorder blocks, splits, and parallel paths.** Reordering and authoring
-  splits/parallel lanes are **author-time only** in core today (the runtime
-  `mutate` surface doesn't reorder or create splits) — this is **net-new core
-  work** (file the core-side entry against #3's stable-API ask when it starts).
-- **Bypass/enable toggle.** The editor shows each block's enabled/bypassed state
-  read-only; toggling it is a distinct mutation from param-setting (belongs with
-  this structural work).
+- **Add / remove / swap blocks — SHIPPED (serial paths only).** `a`/`x`/`w` in
+  the tone editor over `helixgen.mutate` add/remove/swap verbs; parallel-routed
+  paths refuse (records nothing). Reorder within a lane is still deferred (below).
+- **Bypass/enable toggle — SHIPPED.** `b` toggles a block's enabled/bypassed
+  state via `set_bypass`.
+- **Output level/pan editing — SHIPPED.** The output terminal node is an
+  editable row (level/pan) written via `set_output`. Input source stays
+  **read-only** (input-source *write* deferred, below).
+- **Reorder blocks, splits, and parallel paths.** Reordering, authoring
+  splits/parallel lanes, parallel-path add/delete, path change, and
+  **input-source write** are **author-time only** in core today (the runtime
+  `mutate` surface doesn't reorder, create splits, or write input source) — this
+  is **net-new core work** (file the core-side entry against #3's stable-API ask
+  when it starts). Flow-index coordinates (below) are a prerequisite for
+  addressing parallel/multi-flow targets.
 - **Multi-flow / dual-slot editing (adversarial-review finding, 2026-07-18).**
   `RealEditor.get_chain` flattens blocks by lane (`@path`) only — it has no flow
   index (`extract_blocks_from_hsp` doesn't expose it) — and iterates every raw

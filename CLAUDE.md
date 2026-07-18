@@ -1,6 +1,6 @@
 # helixgen-tui
 
-Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium over LAN from terminal. **Design phase — no code yet.** Design spec must be brainstormed + written (backlog #1) before any implementation.
+Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium over LAN from terminal. **Past design phase — shipping.** V1 librarian plus the tone editor (param editing + signal-flow: block add/remove/swap, bypass, output level/pan) have shipped. Design specs live in `docs/superpowers/specs/`; work is tracked in `docs/BACKLOG.md`.
 
 **Repo family (all under `sheax0r`):**
 [`helixgen-core`](https://github.com/sheax0r/helixgen-core) is Python package `helixgen` — libs, CLI, MCP server, authoritative docs (`docs/CLI.md`, `docs/recipe-reference.md`, `docs/stadium-app-parity.md`, protocol references); [`helixgen`](https://github.com/sheax0r/helixgen) is Claude Code plugin/skills repo. This repo consumes core as PyPI dependency (package name `helixgen`, `[device]` extra for network control) — **never vendor or copy core source here**; TUI need engine change, it lands in helixgen-core first.
@@ -10,7 +10,7 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 ## Product ground rules
 
 - **Slots are invisible.** UI speaks tones + setlists only — slot addresses (`1A`..`8D`) are implementation detail user never sees or types. Tone-library model's "slots are just addresses" taken to conclusion. Non-negotiable (core backlog #29).
-- **Librarian-first.** V1 = management surface: tones, setlists, sync, IRs, plus setting **active tone** on device. Shell designed day one for multiple switchable screens (signal-flow editor, global settings, tuner/meters later).
+- **Librarian-first.** V1 = management surface: tones, setlists, sync, IRs, plus setting **active tone** on device. Shell designed day one for multiple switchable screens (global settings, tuner/meters later; signal-flow editing shipped inside the tone editor).
 - **Long-term goal:** full parity with Helix Stadium desktop app, per helixgen-core's `docs/stadium-app-parity.md` coverage matrix.
 - **Engines live in core.** TUI = view/controller over helixgen's library + device APIs (`helixgen.device`, setlist manifest, sync). No protocol logic, no `.hsp` parsing, no hashing in this repo.
 - **Device writes are real.** Same write-gating mentality as core's CLI: reads free; anything mutating device (sync, install, delete, live ops) must be explicit, visible user action in UI — never side effect of navigation. Stadium network stack flaky: surface retry affordances, don't hang UI on dropped frame.

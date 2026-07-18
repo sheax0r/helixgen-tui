@@ -424,9 +424,62 @@ def test_remove_block_parallel_refuses_without_writing(parallel_tone):
     assert hsp_path.read_bytes() == before
 
 
+def test_remove_block_ambiguous_target_fails_without_writing(ambiguous_tone):
+    from pathlib import Path
+
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(ambiguous_tone))
+    before = hsp_path.read_bytes()
+
+    # same model at the same lane+pos across two DSP flows: deleting by
+    # (model, lane, pos) alone is ambiguous, so it must refuse rather than
+    # delete the wrong slot.
+    ghost = BlockVM(
+        model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=()
+    )
+    result = RealEditor().remove_block(ambiguous_tone, ghost)
+    assert not result.ok
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+
+def test_swap_model_ambiguous_target_fails_without_writing(ambiguous_tone):
+    from pathlib import Path
+
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(ambiguous_tone))
+    before = hsp_path.read_bytes()
+
+    ghost = BlockVM(
+        model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=()
+    )
+    result = RealEditor().swap_model(ambiguous_tone, ghost, model=_DRIVE2)
+    assert not result.ok
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+
 def test_add_block_no_hsp_tone_fails_soft(tmp_home):
     from helixgen import preferences
 
     preferences.scaffold_default()
     result = RealEditor().add_block("ghost", after=None, model="X")
+    assert not result.ok
+
+
+def test_remove_block_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    ghost = BlockVM(model="X", display="X", position=1, path=0, enabled=True, params=())
+    result = RealEditor().remove_block("ghost", ghost)
+    assert not result.ok
+
+
+def test_swap_model_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    ghost = BlockVM(model="X", display="X", position=1, path=0, enabled=True, params=())
+    result = RealEditor().swap_model("ghost", ghost, model="Y")
     assert not result.ok

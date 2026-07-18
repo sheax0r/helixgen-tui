@@ -68,8 +68,9 @@ user never sees or types.
 
 The long-term goal is full parity with the Helix Stadium desktop app
 (tracked in helixgen-core's `docs/stadium-app-parity.md`); this v1 ships the
-librarian, with more screens (signal-flow editor, global settings,
-tuner/meters) to follow. See `docs/BACKLOG.md`.
+librarian and the tone editor (param editing plus signal-flow editing —
+block add/remove/swap, bypass, output level/pan), with more screens (global
+settings, tuner/meters) to follow. See `docs/BACKLOG.md`.
 
 ## Development
 

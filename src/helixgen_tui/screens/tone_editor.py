@@ -636,6 +636,19 @@ class ToneEditorScreen(Screen):
         the adapter, so nothing is recorded and no wrong-slot write can occur."""
         return self._chain is not None and len(self._chain.paths) > 1
 
+    def _guard_clean(self, verb: str) -> bool:
+        """Refuse a structural verb while param/output edits are pending. Those
+        edits live only in ``self._edits``/``self._output_edit`` and are flushed
+        solely by ``action_save``; a structural write persists immediately and
+        its ``_reload_chain`` drops the working set, so proceeding would silently
+        discard the user's unsaved edits. Returns True if the caller must abort."""
+        if self.is_dirty:
+            self.app.report_op(
+                OpResult(ok=False, message=f"save or discard edits before {verb}")
+            )
+            return True
+        return False
+
     def _reload_chain(self) -> None:
         """Re-read the chain from disk and drop any working edits — used after a
         structural write (which persists immediately and may shift positions)
@@ -657,6 +670,8 @@ class ToneEditorScreen(Screen):
             self.app.report_op(
                 OpResult(ok=False, message="add not supported on a parallel-routed path")
             )
+            return
+        if self._guard_clean("add"):
             return
         catalog = self.app.core.editor.list_block_catalog()
         self.app.push_screen(BlockPickerModal(catalog), self._on_add_model)
@@ -681,6 +696,8 @@ class ToneEditorScreen(Screen):
                 OpResult(ok=False, message="remove not supported on a parallel-routed path")
             )
             return
+        if self._guard_clean("remove"):
+            return
         result = self.app.core.editor.remove_block(self._tone_id, block)
         self.app.report_op(result)
         if result.ok:
@@ -692,6 +709,8 @@ class ToneEditorScreen(Screen):
         block = self._selected_block()
         if block is None:
             return
+        if self._guard_clean("bypass toggle"):
+            return
         result = self.app.core.editor.set_bypass(self._tone_id, block, not block.enabled)
         self.app.report_op(result)
         if result.ok:
@@ -702,6 +721,8 @@ class ToneEditorScreen(Screen):
             return
         block = self._selected_block()
         if block is None:
+            return
+        if self._guard_clean("swap"):
             return
         catalog = self.app.core.editor.list_block_catalog()
         self.app.push_screen(BlockPickerModal(catalog), self._on_swap_model)
