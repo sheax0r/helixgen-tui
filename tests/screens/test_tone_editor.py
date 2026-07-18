@@ -458,6 +458,165 @@ async def test_long_description_does_not_crowd_out_the_tables():
         assert rendered.count("\n") <= 3
 
 
+async def test_add_block_serial_opens_picker_and_records():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # open editor, first block selected
+        await pilot.press("a")  # add block -> picker
+        from helixgen_tui.widgets.block_picker_modal import BlockPickerModal
+
+        assert isinstance(app.screen, BlockPickerModal)
+        await pilot.press("enter")  # pick first category
+        await pilot.press("enter")  # pick first model
+        await pilot.pause()
+        # an add_block call recorded, after the selected (first) block
+        adds = [c for c in editor.calls if c[0] == "add_block"]
+        assert len(adds) == 1
+        _, (tone_id, after_coords, model) = adds[0]
+        assert tone_id == "tone-1"
+        assert after_coords == ("HD2_DrvScream808", 0, 1)
+        assert model == "DrvA"  # first model of the first catalogue category
+        # chain re-read shows the new block (fake uses model id as display)
+        assert "DrvA" in _chain_text(app)
+
+
+async def test_add_block_parallel_refuses_and_records_nothing():
+    editor = FakeEditorPort(
+        chains={"tone-1": _parallel_chain()}, parallel_tones={"tone-1"}
+    )
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        await pilot.press("a")  # refuse: parallel-routed
+        from helixgen_tui.widgets.block_picker_modal import BlockPickerModal
+
+        assert not isinstance(app.screen, BlockPickerModal)  # no picker
+        assert [c for c in editor.calls if c[0] == "add_block"] == []
+        assert "parallel" in app.last_action.lower()
+
+
+async def test_remove_block_parallel_refuses_and_records_nothing():
+    editor = FakeEditorPort(
+        chains={"tone-1": _parallel_chain()}, parallel_tones={"tone-1"}
+    )
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        await pilot.press("x")  # refuse: parallel-routed
+        assert [c for c in editor.calls if c[0] == "remove_block"] == []
+        assert "parallel" in app.last_action.lower()
+
+
+async def test_remove_block_serial_records():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # first block (Scream 808) selected
+        await pilot.press("x")
+        await pilot.pause()
+        removes = [c for c in editor.calls if c[0] == "remove_block"]
+        assert len(removes) == 1
+        _, (tone_id, coords) = removes[0]
+        assert tone_id == "tone-1"
+        assert coords == ("HD2_DrvScream808", 0, 1)
+        # gone from the re-read chain
+        assert "Scream 808" not in _chain_text(app)
+
+
+async def test_bypass_records_flipped_enabled():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # Scream 808 (enabled=True) selected
+        await pilot.press("b")
+        await pilot.pause()
+        byps = [c for c in editor.calls if c[0] == "set_bypass"]
+        assert len(byps) == 1
+        _, (tone_id, coords, enabled) = byps[0]
+        assert tone_id == "tone-1"
+        assert coords == ("HD2_DrvScream808", 0, 1)
+        assert enabled is False  # was enabled, toggled to bypassed
+
+
+async def test_swap_model_records():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # Scream 808 selected
+        await pilot.press("w")  # swap -> picker
+        from helixgen_tui.widgets.block_picker_modal import BlockPickerModal
+
+        assert isinstance(app.screen, BlockPickerModal)
+        await pilot.press("enter")  # category
+        await pilot.press("enter")  # model
+        await pilot.pause()
+        swaps = [c for c in editor.calls if c[0] == "swap_model"]
+        assert len(swaps) == 1
+        _, (tone_id, coords, model) = swaps[0]
+        assert tone_id == "tone-1"
+        assert coords == ("HD2_DrvScream808", 0, 1)
+        assert model == "DrvA"
+
+
+async def test_output_edit_records_set_output_and_dirty_then_saves():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        # walk to the output node: right (amp) -> right (output)
+        await pilot.press("right")
+        await pilot.press("right")
+        assert [n for n, _ in _params_cells(app)] == ["Level", "Pan"]
+        await pilot.press("tab")  # focus params pane
+        await pilot.press("down")  # select Pan
+        await pilot.press("right")  # nudge pan 0.50 -> 0.51
+        assert app.screen.is_dirty
+        assert dict(_params_cells(app))["Pan"] == "0.51"
+        await pilot.press("s")  # save via existing save path
+        await pilot.pause()
+        outs = [c for c in editor.calls if c[0] == "set_output"]
+        assert len(outs) == 1
+        _, (tone_id, level, pan) = outs[0]
+        assert tone_id == "tone-1"
+        assert abs(level - (-3.0)) < 1e-9
+        assert abs(pan - 0.51) < 1e-9
+        assert not app.screen.is_dirty
+
+
+async def test_input_node_is_read_only():
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        # walk left to the input head node
+        await pilot.press("left")
+        assert [n for n, _ in _params_cells(app)] == ["Source"]
+        # no structural/output write is available on the input node
+        await pilot.press("a")
+        await pilot.press("x")
+        await pilot.press("b")
+        await pilot.press("w")
+        await pilot.press("tab")
+        await pilot.press("right")  # would nudge if editable
+        assert not app.screen.is_dirty
+        # only the read verbs (if any) ran; no structural/output writes
+        writes = [
+            c
+            for c in editor.calls
+            if c[0] in ("add_block", "remove_block", "set_bypass", "swap_model", "set_output")
+        ]
+        assert writes == []
+
+
 async def test_float_edit_back_to_display_value_clears_dirty_for_non_2dp_disk_value():
     """An on-disk float not aligned to 2dp (0.333 -> shows 0.33) must still
     prune cleanly: nudge up then down lands on 0.33 and dirty clears, so a

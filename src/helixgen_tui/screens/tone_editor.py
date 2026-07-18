@@ -36,6 +36,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Input, Static
 
 from helixgen_tui.core.models import BlockVM, ChainVM, MutationPlan, OpResult, ParamChange, ParamVM
+from helixgen_tui.widgets.block_picker_modal import BlockPickerModal
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
 
@@ -46,6 +47,10 @@ _HEADER_ID = "editor-header"
 _ENTRY_ID = "editor-entry"
 
 _FLOAT_STEP = 0.01
+# Output main-out level is dB, roughly [-120, 20]; nudge in 0.5 dB steps.
+_LEVEL_STEP = 0.5
+_LEVEL_MIN = -120.0
+_LEVEL_MAX = 20.0
 
 _DESC_MAX = 100
 
@@ -73,6 +78,10 @@ def _fmt_value(value: object) -> str:
 
 def _clamp_float(value: float) -> float:
     return round(min(1.0, max(0.0, value)), 2)
+
+
+def _clamp_level(value: float) -> float:
+    return round(min(_LEVEL_MAX, max(_LEVEL_MIN, value)), 1)
 
 
 def _coerce(ptype: str, raw: str) -> object:
@@ -147,6 +156,10 @@ class ToneEditorScreen(Screen):
         Binding("right", "horizontal(1)", "Right", show=False),
         Binding("tab", "switch_pane", "Switch pane"),
         Binding("enter", "manual_entry", "Edit value"),
+        Binding("a", "add_block", "Add block"),
+        Binding("x", "remove_block", "Remove"),
+        Binding("b", "toggle_bypass", "Bypass"),
+        Binding("w", "swap_model", "Swap"),
         Binding("s", "save", "Save"),
         Binding("ctrl+s", "save", "Save", show=False),
         Binding("escape", "leave", "Back"),
@@ -166,6 +179,10 @@ class ToneEditorScreen(Screen):
         # only while the value differs from disk (an edit back to the on-disk
         # value prunes itself), so ``bool(self._edits)`` is the dirty flag.
         self._edits: dict[tuple[str, int, int, str], object] = {}
+        # Pending output-node edit (level, pan), held like a param edit and
+        # flushed on save via ``set_output``; ``None`` when the output matches
+        # disk. Part of the dirty flag.
+        self._output_edit: tuple[float, float] | None = None
         self._editing = False
         self._focus = "blocks"  # "blocks" (chain navigator) | "params"
         super().__init__()
@@ -251,7 +268,17 @@ class ToneEditorScreen(Screen):
 
     @property
     def is_dirty(self) -> bool:
-        return bool(self._edits)
+        return bool(self._edits) or self._output_edit is not None
+
+    def _output_working(self) -> tuple[float, float] | None:
+        """The working output (level, pan): a pending edit if present, else the
+        on-disk output; ``None`` when the tone has no readable output node."""
+        if self._chain is None or self._chain.output is None:
+            return None
+        if self._output_edit is not None:
+            return self._output_edit
+        out = self._chain.output
+        return (out.level, out.pan)
 
     # -- rendering ---------------------------------------------------------
 
@@ -275,10 +302,11 @@ class ToneEditorScreen(Screen):
         return f"IN:{src or '?'}"
 
     def _output_label(self) -> str:
-        out = self._chain.output if self._chain else None
-        if out is None:
+        working = self._output_working()
+        if working is None:
             return "OUT —"
-        return f"OUT L{out.level:.1f} P{out.pan:.2f}"
+        level, pan = working
+        return f"OUT L{level:.1f} P{pan:.2f}"
 
     @staticmethod
     def _block_label(block: BlockVM) -> str:
@@ -342,10 +370,12 @@ class ToneEditorScreen(Screen):
             table.add_row(Text("Source"), Text(self._chain.input_source or "?"))
             return
         if self._zone == "output":
-            out = self._chain.output
-            if out is not None:
-                table.add_row(Text("Level"), Text(f"{out.level:.1f}"))
-                table.add_row(Text("Pan"), Text(f"{out.pan:.2f}"))
+            working = self._output_working()
+            if working is not None:
+                level, pan = working
+                table.add_row(Text("Level"), Text(f"{level:.1f}"))
+                table.add_row(Text("Pan"), Text(f"{pan:.2f}"))
+                table.move_cursor(row=min(self._param_index, 1))
             return
         block = self._selected_block()
         params = self._selected_params()
@@ -392,11 +422,21 @@ class ToneEditorScreen(Screen):
             self._render_chain()
             self._rebuild_params_table()
         else:
-            params = self._selected_params()
-            if not params:
+            n = self._param_pane_row_count()
+            if n == 0:
                 return
-            self._param_index = max(0, min(self._param_index + delta, len(params) - 1))
+            self._param_index = max(0, min(self._param_index + delta, n - 1))
             self.query_one(f"#{_PARAMS_ID}", DataTable).move_cursor(row=self._param_index)
+
+    def _param_pane_row_count(self) -> int:
+        """How many selectable/editable rows the inspector holds for the current
+        selection: a block's params, the output's level+pan, or none (the input
+        node's source is read-only)."""
+        if self._zone == "output":
+            return 2 if (self._chain is not None and self._chain.output is not None) else 0
+        if self._zone == "input":
+            return 0
+        return len(self._selected_params())
 
     def action_horizontal(self, direction: int) -> None:
         """left/right: in the params inspector nudge; in the chain navigator
@@ -463,7 +503,36 @@ class ToneEditorScreen(Screen):
         self._render_header()
         self._rebuild_params_table()
 
+    def _set_output_edit(self, level: float, pan: float) -> None:
+        """Record a working output edit, pruning it when it matches disk."""
+        out = self._chain.output if self._chain else None
+        if (
+            out is not None
+            and _clamp_level(level) == _clamp_level(out.level)
+            and _clamp_float(pan) == _clamp_float(out.pan)
+        ):
+            self._output_edit = None
+        else:
+            self._output_edit = (level, pan)
+        self._render_header()
+        self._render_chain()
+        self._rebuild_params_table()
+
+    def _nudge_output(self, direction: int) -> None:
+        working = self._output_working()
+        if working is None:
+            return
+        level, pan = working
+        if self._param_index == 0:  # Level (dB)
+            level = _clamp_level(level + direction * _LEVEL_STEP)
+        else:  # Pan (0..1)
+            pan = _clamp_float(pan + direction * _FLOAT_STEP)
+        self._set_output_edit(level, pan)
+
     def _nudge(self, direction: int) -> None:
+        if self._zone == "output":
+            self._nudge_output(direction)
+            return
         block = self._selected_block()
         param = self._selected_param()
         if block is None or param is None:
@@ -482,6 +551,9 @@ class ToneEditorScreen(Screen):
     def action_manual_entry(self) -> None:
         if self._editing or self._focus != "params":
             return
+        if self._zone == "output":
+            self._open_output_entry()
+            return
         block = self._selected_block()
         param = self._selected_param()
         if block is None or param is None:
@@ -495,8 +567,24 @@ class ToneEditorScreen(Screen):
         self.mount(entry)
         entry.focus()
 
+    def _open_output_entry(self) -> None:
+        working = self._output_working()
+        if working is None:
+            return
+        self._editing = True
+        idx = min(self._param_index, 1)
+        label = "Level" if idx == 0 else "Pan"
+        value = f"{working[idx]:.1f}" if idx == 0 else f"{working[idx]:.2f}"
+        entry = Input(value=value, id=_ENTRY_ID)
+        entry.border_title = f"edit {label}"
+        self.mount(entry)
+        entry.focus()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != _ENTRY_ID:
+            return
+        if self._zone == "output":
+            self._submit_output_entry(event.value)
             return
         block = self._selected_block()
         param = self._selected_param()
@@ -515,6 +603,24 @@ class ToneEditorScreen(Screen):
         self._set_value(block, param, value)
         self._close_entry()
 
+    def _submit_output_entry(self, raw: str) -> None:
+        working = self._output_working()
+        if working is None:
+            self._close_entry()
+            return
+        try:
+            v = float(raw.strip())
+        except ValueError:
+            self.app.report_op(OpResult(ok=False, message=f"invalid value: {raw!r}"))
+            return  # keep the entry open to correct it
+        level, pan = working
+        if min(self._param_index, 1) == 0:
+            level = _clamp_level(v)
+        else:
+            pan = _clamp_float(v)
+        self._set_output_edit(level, pan)
+        self._close_entry()
+
     def _close_entry(self) -> None:
         self._editing = False
         try:
@@ -522,6 +628,94 @@ class ToneEditorScreen(Screen):
         except Exception:  # noqa: BLE001 — already gone
             pass
         self._reflect_focus()
+
+    # -- structural verbs --------------------------------------------------
+
+    def _is_parallel(self) -> bool:
+        """A parallel-routed tone (>1 lane): add/remove refuse before touching
+        the adapter, so nothing is recorded and no wrong-slot write can occur."""
+        return self._chain is not None and len(self._chain.paths) > 1
+
+    def _reload_chain(self) -> None:
+        """Re-read the chain from disk and drop any working edits — used after a
+        structural write (which persists immediately and may shift positions)
+        and after a save."""
+        self._edits.clear()
+        self._output_edit = None
+        self._chain = self.app.core.editor.get_chain(self._tone_id)
+        self._render_header()
+        self._render_chain()
+        self._rebuild_params_table()
+
+    def action_add_block(self) -> None:
+        if self._editing or self._chain is None:
+            return
+        block = self._selected_block()
+        if block is None:
+            return  # input/output node: nothing to add after
+        if self._is_parallel():
+            self.app.report_op(
+                OpResult(ok=False, message="add not supported on a parallel-routed path")
+            )
+            return
+        catalog = self.app.core.editor.list_block_catalog()
+        self.app.push_screen(BlockPickerModal(catalog), self._on_add_model)
+
+    def _on_add_model(self, model: str | None) -> None:
+        if not model:
+            return
+        block = self._selected_block()
+        result = self.app.core.editor.add_block(self._tone_id, block, model)
+        self.app.report_op(result)
+        if result.ok:
+            self._reload_chain()
+
+    def action_remove_block(self) -> None:
+        if self._editing or self._chain is None:
+            return
+        block = self._selected_block()
+        if block is None:
+            return
+        if self._is_parallel():
+            self.app.report_op(
+                OpResult(ok=False, message="remove not supported on a parallel-routed path")
+            )
+            return
+        result = self.app.core.editor.remove_block(self._tone_id, block)
+        self.app.report_op(result)
+        if result.ok:
+            self._reload_chain()
+
+    def action_toggle_bypass(self) -> None:
+        if self._editing or self._chain is None:
+            return
+        block = self._selected_block()
+        if block is None:
+            return
+        result = self.app.core.editor.set_bypass(self._tone_id, block, not block.enabled)
+        self.app.report_op(result)
+        if result.ok:
+            self._reload_chain()
+
+    def action_swap_model(self) -> None:
+        if self._editing or self._chain is None:
+            return
+        block = self._selected_block()
+        if block is None:
+            return
+        catalog = self.app.core.editor.list_block_catalog()
+        self.app.push_screen(BlockPickerModal(catalog), self._on_swap_model)
+
+    def _on_swap_model(self, model: str | None) -> None:
+        if not model:
+            return
+        block = self._selected_block()
+        if block is None:
+            return
+        result = self.app.core.editor.swap_model(self._tone_id, block, model)
+        self.app.report_op(result)
+        if result.ok:
+            self._reload_chain()
 
     # -- save / leave ------------------------------------------------------
 
@@ -534,30 +728,34 @@ class ToneEditorScreen(Screen):
     def action_save(self) -> None:
         if self._editing:
             return
-        if not self._edits:
+        if not self._edits and self._output_edit is None:
             self.app.report_op(OpResult(ok=True, message="nothing to save"))
             return
-        changes = self._pending_changes()
-        result = self.app.core.editor.save_params(self._tone_id, changes)
-        self.app.report_op(result)
-        if result.ok:
+        all_ok = True
+        if self._edits:
+            result = self.app.core.editor.save_params(self._tone_id, self._pending_changes())
+            self.app.report_op(result)
+            all_ok = all_ok and result.ok
+        if self._output_edit is not None:
+            level, pan = self._output_edit
+            result = self.app.core.editor.set_output(self._tone_id, level, pan)
+            self.app.report_op(result)
+            all_ok = all_ok and result.ok
+        if all_ok:
             # Rebase to the saved values so the display stays and dirty clears.
-            self._edits.clear()
-            self._chain = self.app.core.editor.get_chain(self._tone_id)
-            self._render_header()
-            self._render_chain()
-            self._rebuild_params_table()
+            self._reload_chain()
 
     def action_leave(self) -> None:
         if self._editing:
             self._close_entry()
             return
-        if not self._edits:
+        if not self._edits and self._output_edit is None:
             self.app.pop_screen()
             return
+        n = len(self._edits) + (1 if self._output_edit is not None else 0)
         plan = MutationPlan(
             title="Discard unsaved changes?",
-            lines=(f"{len(self._edits)} unsaved param edit(s) will be lost.",),
+            lines=(f"{n} unsaved edit(s) will be lost.",),
         )
         self.app.push_screen(ConfirmModal(plan), self._confirm_leave)
 

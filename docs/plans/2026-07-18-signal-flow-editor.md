@@ -165,7 +165,7 @@ write) for every new verb.
 `ConfirmModal`), `src/helixgen_tui/widgets/help_overlay.py`,
 `tests/screens/test_tone_editor.py`, `README.md`.
 
-- [ ] Failing pilot tests (assert on `FakeEditorPort.calls`, footer text, dirty
+- [x] Failing pilot tests (assert on `FakeEditorPort.calls`, footer text, dirty
   state):
   - `a` on a block in a **serial** path opens the block-picker modal; choosing a
     model records `("add_block", ...)` and marks the editor dirty;
@@ -177,14 +177,14 @@ write) for every new verb.
   - editing the **output** node's pan/level records `("set_output", ...)` and
     goes dirty; `s` still saves via the existing save path;
   - the **input** node is read-only (no write action available).
-- [ ] Run, confirm fail.
-- [ ] Implement: add `BINDINGS` + `action_*` handlers (`a` add, `x` delete,
+- [x] Run, confirm fail.
+- [x] Implement: add `BINDINGS` + `action_*` handlers (`a` add, `x` delete,
   `b` bypass, a swap affordance, output pan/level edit reusing the inspector's
   nudge/manual-entry mechanics from v0.2.0). Add the block-picker modal
   (category → model; markup-safe). Route refusals through the status footer.
   Update `help_overlay.py` and the key-hints footer with the new keys; update the
   `README.md` editor/keys description.
-- [ ] Run tests, confirm pass. Commit.
+- [x] Run tests, confirm pass. Commit.
 
 ---
 

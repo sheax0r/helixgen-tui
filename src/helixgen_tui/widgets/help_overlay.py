@@ -29,11 +29,19 @@ helixgen-tui — key bindings
 
   Tone editor
     up/down  Move selection in the focused pane
-    tab      Switch between the blocks and params panes
-    left/rt  Nudge the selected param (params pane)
+    tab      Switch between the chain and params panes
+    left/rt  Chain: walk the lane / Params: nudge the value
     enter    Manual entry: type a value, enter to commit
+    a        Add a block after the selected one (serial paths)
+    x        Remove the selected block (serial paths)
+    b        Bypass / enable the selected block
+    w        Swap the selected block's model
     s        Save edits to the library file
     escape   Back (confirms if there are unsaved edits)
+
+    Select the output node to edit its level/pan; the input
+    node's source is read-only. Add/remove refuse on a
+    parallel-routed path.
 
   Setlists
     a        Add tone to setlist
