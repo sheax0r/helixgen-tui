@@ -75,3 +75,21 @@ before any code.
 - IR selection helpers now index into the backing list and would raise
   `IndexError` on a table/list mismatch instead of degrading to None —
   intentional fail-fast, noting the behavior change.
+
+## 10. Fuzzy search everywhere (user request, 2026-07-18)
+
+Type part of a name to find/use the thing, wherever a list is presented:
+selecting a setlist, picking a tone in the add-tone modal, the library tone
+list, local/device IR panes. Today only the Library screen has a filter
+(`/`), it matches name-substring only (see #8), and the pickers/panes have
+none. Wants: incremental fuzzy matching (subsequence or trigram), highlight
+of matches, and enter-to-act on the top hit.
+
+## 11. Key-hints footer polish (from PR #16 review)
+
+- At narrow widths (~80 cols) the bindings footer silently scrolls trailing
+  keys out of view on binding-heavy screens (setlists) — consider compact
+  key-only display or priority ordering.
+- The footer also exposes Textual's command palette (^p: theme, screenshot,
+  …). Decide whether that's intended product surface or should be disabled
+  (`ENABLE_COMMAND_PALETTE = False`).

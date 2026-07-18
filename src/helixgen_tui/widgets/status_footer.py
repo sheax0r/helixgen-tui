@@ -13,7 +13,6 @@ class StatusFooter(Static):
 
     DEFAULT_CSS = """
     StatusFooter {
-        dock: bottom;
         height: 1;
         width: 100%;
         background: $panel;
