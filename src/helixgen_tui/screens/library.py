@@ -14,6 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.coordinate import Coordinate
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static
 
@@ -31,6 +32,21 @@ _FILTER_ID = "library-filter"
 _TABLE_ID = "library-table"
 
 _OFFLINE_MSG = "device offline — connect on the Device tab (4) first"
+
+
+class ActivateToneRequested(Message):
+    """Screen-internal hand-off: launch the make-active worker on the UI thread.
+
+    Posted from the install-then-activate chain's ``done`` callback, which under
+    the production thread spawn runs on a worker thread — where calling
+    ``DeviceService.run`` (``App.run_worker``) directly would be unsafe. The
+    handler runs on the UI thread; ``post_message`` is thread-safe and, under
+    the synchronous test spawn, simply queues for the next event-loop tick (no
+    ``call_from_thread`` self-deadlock)."""
+
+    def __init__(self, tone_id: str) -> None:
+        self.tone_id = tone_id
+        super().__init__()
 
 
 class ToneDetailModal(ModalScreen[None]):
@@ -158,17 +174,22 @@ class LibraryScreen(LibrarianScreen):
             return True
         return False
 
+    def _activate(self, tone_id: str) -> None:
+        """Launch the make-active worker. Always called on the UI thread (a key
+        action, or the ActivateToneRequested handler)."""
+        device = self.app.core.device
+        self.app.device_service.run(
+            "make_active",
+            lambda: device.make_active(tone_id),
+            self.app.report_op,
+        )
+
     def action_make_active(self) -> None:
         tone = self._selected_tone()
         if tone is None or self._offline():
             return
-        device = self.app.core.device
         if tone.sync == SyncState.SYNCED:
-            self.app.device_service.run(
-                "make_active",
-                lambda: device.make_active(tone.tone_id),
-                self.app.report_op,
-            )
+            self._activate(tone.tone_id)
             return
         # Local-only: confirm, then install (sync) the tone before activating it.
         plan = MutationPlan(
@@ -184,26 +205,28 @@ class LibraryScreen(LibrarianScreen):
         if not confirmed:
             return
         device = self.app.core.device
-        service = self.app.device_service
+        tone_id = tone.tone_id
 
         def _after_sync(result: OpResult) -> None:
+            # Runs on a worker thread under the production spawn — must not call
+            # App.run_worker directly. Hop to the UI thread for the follow-up.
             self.app.report_op(result)
             if result.ok:
-                service.run(
-                    "make_active",
-                    lambda: device.make_active(tone.tone_id),
-                    self.app.report_op,
-                )
+                self.post_message(ActivateToneRequested(tone_id))
 
-        service.run("sync_tone", lambda: device.sync_tone(tone.tone_id), _after_sync)
+        self.app.device_service.run("sync_tone", lambda: device.sync_tone(tone_id), _after_sync)
+
+    def on_activate_tone_requested(self, message: ActivateToneRequested) -> None:
+        self._activate(message.tone_id)
 
     def action_sync_tone(self) -> None:
         tone = self._selected_tone()
         if tone is None or self._offline():
             return
         device = self.app.core.device
+        tone_id = tone.tone_id
         self.app.device_service.run(
             "sync_tone",
-            lambda: device.sync_tone(tone.tone_id),
+            lambda: device.sync_tone(tone_id),
             self.app.report_op,
         )

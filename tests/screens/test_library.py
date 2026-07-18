@@ -326,3 +326,50 @@ async def test_s_syncs_selected_tone():
         await pilot.press("s")  # cursor on row 0 = tone-1
         await pilot.pause()
         assert ("sync_tone", ("tone-1",)) in port.calls
+
+
+async def _wait_until(pilot, cond, timeout=3.0):
+    """Pump the event loop until ``cond()`` holds (or fail after ``timeout``)."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        if cond():
+            return
+    raise AssertionError("condition not met within timeout")
+
+
+async def test_chained_install_then_activate_under_real_thread_spawn():
+    """The install-then-activate chain must marshal its follow-up back to the UI
+    thread: under the REAL thread-worker spawn the sync ``done`` callback runs
+    off-thread, so it posts a message instead of calling run_worker directly."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core)  # default (real Textual thread-worker) spawn
+    async with app.run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: app.device_service is not None
+            and app.device_service.state.status == "connected",
+        )
+        await pilot.press("down")  # row 1 = Foo Fighters (LOCAL_ONLY, tone-2)
+        await pilot.press("a")
+        await _wait_until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+
+        await pilot.press("y")
+        await _wait_until(pilot, lambda: ("make_active", ("tone-2",)) in port.calls)
+
+        assert ("sync_tone", ("tone-2",)) in port.calls
+        assert ("make_active", ("tone-2",)) in port.calls
+        assert port.calls.index(("sync_tone", ("tone-2",))) < port.calls.index(
+            ("make_active", ("tone-2",))
+        )
+
+        await _wait_until(pilot, lambda: app.last_action == "make_active ok")
+        footer = app.screen.query_one(StatusFooter)
+        assert "make_active ok" in footer.last_action

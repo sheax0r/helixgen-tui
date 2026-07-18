@@ -57,6 +57,11 @@ asyncio_mode = "auto"
 line-length = 100
 src = ["src", "tests"]
 
+[tool.ruff.lint]
+# The plan mandates a 100-char line length; E501 is not in ruff's default
+# select, so it must be enabled explicitly for the limit to be enforced.
+extend-select = ["E501"]
+
 [tool.ruff.lint.per-file-ignores]
 # The Task 1 brief specifies test_shell.py verbatim; some tests bind
 # `pilot` from `run_test()` without using it, which trips F841.

@@ -224,7 +224,8 @@ class RealDevicePort:
             irhash, _ = mapping.resolve_by_basename(ir_name)
             results = ir_upload.upload_missing_irs(ip, [irhash])
             ok = all(r.get("outcome") != "upload_error" for r in results)
-            return OpResult(ok=ok, message=f"pushed IR {ir_name!r}" if ok else f"IR {ir_name!r} upload failed")
+            msg = f"pushed IR {ir_name!r}" if ok else f"IR {ir_name!r} upload failed"
+            return OpResult(ok=ok, message=msg)
 
         return self._op("push_ir", _run)
 
