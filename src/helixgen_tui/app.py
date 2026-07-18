@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from textual.app import App
+from textual.app import App, ScreenStackError
 from textual.binding import Binding
 from textual.message import Message
 
@@ -171,6 +171,23 @@ class HelixgenTuiApp(App):
         footer = self._active_footer()
         if footer is not None:
             footer.set_last_action(message.result.message)
+
+    def clear_selection(self) -> None:
+        """Also treat an empty screen stack as "nothing to clear".
+
+        On Python >= 3.12 Textual's ``run_async`` installs
+        ``asyncio.eager_task_factory``, so the default mode screen's children
+        mount inside ``_init_mode`` *before* the screen is pushed onto the
+        mode's stack — and ``Input``'s selection watcher calls this method at
+        exactly that moment. Textual only catches ``NoScreen`` here, so the
+        ``ScreenStackError`` from ``App.screen`` crashed every real launch
+        (Pilot's ``run_test`` never installs the factory, which is why tests
+        alone missed it). See tests/test_eager_boot.py.
+        """
+        try:
+            super().clear_selection()
+        except ScreenStackError:
+            pass
 
     def action_show_help(self) -> None:
         self.push_screen(HelpOverlay())
