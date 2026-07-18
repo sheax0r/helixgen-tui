@@ -217,3 +217,21 @@ async def test_info_refresh_under_real_thread_spawn_renders_without_crashing():
         info_text = str(info_widget.render())
         assert "Serial: ABC123" in info_text
         assert "AC/DC - Back in Black" in info_text
+
+
+# --- Fix 4: device info re-read on screen-resume ---------------------------
+
+
+async def test_screen_resume_rereads_device_info():
+    port = _InfoDevicePort(state=_CONNECTED, info={"Firmware": "3.50"})
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("4")
+        await pilot.pause()
+        assert "Firmware: 3.50" in str(app.screen.query_one("#device-info").render())
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        port._info = {"Firmware": "3.70"}
+        await pilot.press("4")  # back — on_screen_resume re-reads info
+        await pilot.pause()
+        assert "Firmware: 3.70" in str(app.screen.query_one("#device-info").render())

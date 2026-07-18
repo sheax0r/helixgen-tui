@@ -36,3 +36,18 @@ before any code.
 - **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
   push** — `RealDevicePort` returns `ok=False` for these; the engine change
   lands in helixgen-core first (ref #3's stable-API ask).
+- **#7 Shipped-vs-spec deltas (consciously deferred in the v1 plan)** — recorded
+  at v1 release so the gaps are tracked, not forgotten. Each was scoped out in
+  the implementation plan, not missed:
+  - **Device-side setlists pane** — the Setlists screen edits the local
+    manifest only; a read-back of what's actually mirrored on the device is
+    future work.
+  - **Sortable tone list** — the Library table renders in library order with a
+    substring filter; column sorting isn't wired.
+  - **Detail-view variants + normalized telemetry** — `ToneDetailModal` shows
+    name/guitar/setlists/description; per-guitar variants and normalized
+    loudness/telemetry from the tone meta aren't surfaced.
+  - **`--gc` from the UI** — `sync_all` always passes `gc=False`; the
+    pool garbage-collect toggle is exposed on the CLI only.
+  - **Tab-cycling** — modes are reached by their number keys (`1`–`4`); there's
+    no `tab`/`shift+tab` cycle between them.

@@ -224,6 +224,17 @@ Methods bound (all **network**, signature-verified only — never called here):
   `HelixClient.install_into_pool` + a transcode, which the CLI reaches via the
   private `_install_hsp_open`; the port stays on the public engine).
   `plan_sync_all` is built **offline** from the manifest — no client.
+  **Report shape (recorded for Fix 2, helixgen 0.26):** `sync_setlists` returns
+  `{ok, setlists, pool:{installed,updated,skipped,deleted,delete_skipped},
+  references:{<setlist>:{added,removed}}, gc:{deleted}, irs:[...], errors:[...]}`
+  — per-tone install/update/IR failures accumulate in `errors` and `ok` is
+  `not errors`. `RealDevicePort._summarize_sync_report` folds the four bucket
+  counts (installed/updated/skipped + `len(errors)` as *failed*) into the
+  `OpResult` message and fails the op when anything failed, rather than
+  discarding the report and always reporting success. A **targeted** sync
+  (`setlists=[...]`) also flips its named setlists to `synced`, so
+  `sync_tone` restricts itself to setlists **already** `is_synced` to avoid
+  silently opting a draft setlist into mirroring (Fix 3).
 - **IR maintenance** — `helixgen.device.maintenance`:
   `delete_device_ir(client, name_or_hash, *, ip, ...) -> dict`,
   `ir_prune(*, ip=None, execute=False, ...) -> dict` (dry-run when

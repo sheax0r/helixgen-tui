@@ -34,12 +34,14 @@ helixgen-tui — key bindings
     K        Move tone up
     S        Sync selected setlist
     A        Sync all setlists
+    r        Refresh
 
   IRs
     p        Push selected local IR to device
     R        Rename device IR
     d        Delete device IR
     P        Prune device IRs
+    r        Refresh
 
   Device
     b        Backup

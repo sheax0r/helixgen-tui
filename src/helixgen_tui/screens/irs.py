@@ -89,6 +89,7 @@ class IrsScreen(LibrarianScreen):
     MODE_NAME = "irs"
 
     BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
         Binding("p", "push_ir", "Push"),
         Binding("R", "rename_ir", "Rename"),
         Binding("d", "delete_ir", "Delete"),
@@ -134,6 +135,19 @@ class IrsScreen(LibrarianScreen):
         table.clear()
         for ir in self._local_irs:
             table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=ir.name)
+
+    def action_refresh(self) -> None:
+        """`r`: re-read the local pane and re-query the device pane (matching
+        LibraryScreen's refresh)."""
+        self.refresh_local_irs()
+        self.request_device_refresh()
+
+    def on_screen_resume(self) -> None:
+        """Refresh both panes on every return to this (singleton) mode screen —
+        on_mount fires once, so IRs registered/pushed elsewhere would otherwise
+        stay stale. The device pane refreshes via the existing query path."""
+        self.refresh_local_irs()
+        self.request_device_refresh()
 
     def _selected_local_ir(self) -> IrVM | None:
         table = self.query_one(f"#{_LOCAL_TABLE_ID}", DataTable)

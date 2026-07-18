@@ -52,6 +52,11 @@ via `r` on the Device tab) once one is.
 setlists only — slot addresses like `5A` are an implementation detail the
 user never sees or types.
 
+> **Note:** device *restore* and device-side *tone delete* are not yet wired —
+> they await core-side verbs (a restore that carries its target preset, and a
+> single-pool-preset delete). The UI surfaces a clear reason until then. See
+> `docs/BACKLOG.md` #6.
+
 The long-term goal is full parity with the Helix Stadium desktop app
 (tracked in helixgen-core's `docs/stadium-app-parity.md`); this v1 ships the
 librarian, with more screens (signal-flow editor, global settings,

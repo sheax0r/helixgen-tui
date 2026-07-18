@@ -135,6 +135,12 @@ class LibraryScreen(LibrarianScreen):
     def action_refresh(self) -> None:
         self.refresh_tones()
 
+    def on_screen_resume(self) -> None:
+        """Re-read the library each time this (singleton) mode screen is shown
+        again — on_mount only fires once, so without this a tone appended while
+        another tab was active would never appear on return."""
+        self.refresh_tones()
+
     def action_focus_filter(self) -> None:
         self.query_one(f"#{_FILTER_ID}", Input).focus()
 

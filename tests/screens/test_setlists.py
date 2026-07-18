@@ -394,3 +394,36 @@ async def test_capital_a_under_real_thread_spawn_shows_plan_lines_verbatim():
 
         await pilot.press("y")
         await _wait_until(pilot, lambda: ("sync_all", (False,)) in port.calls)
+
+
+# --- Fix 4: r refresh binding + refresh on screen-resume --------------------
+
+
+async def test_r_refreshes_setlists_from_table():
+    core = FakeCore(tones=list(_TONES), setlists=list(_SETLISTS))
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        left = app.screen.query(DataTable)[0]
+        assert left.row_count == 2
+        core.setlists.setlists.append(SetlistVM(name="Gig 3", sync_enabled=False, tones=()))
+        left.focus()
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert left.row_count == 3
+
+
+async def test_screen_resume_refreshes_setlists():
+    core = FakeCore(tones=list(_TONES), setlists=list(_SETLISTS))
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        left = app.screen.query(DataTable)[0]
+        assert left.row_count == 2
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        core.setlists.setlists.append(SetlistVM(name="Gig 3", sync_enabled=False, tones=()))
+        await _goto_setlists(pilot)  # back — on_screen_resume re-reads
+        left = app.screen.query(DataTable)[0]
+        assert left.row_count == 3

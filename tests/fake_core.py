@@ -38,7 +38,10 @@ class FakeLibraryPort:
 
 
 class FakeSetlistPort:
-    """In-memory SetlistPort; mutations are recorded in `self.calls`."""
+    """In-memory SetlistPort; mutations are recorded in `self.calls` AND applied
+    to the stored setlists, so a subsequent `list_setlists()` reflects them —
+    mirroring how `RealSetlists` persists to the manifest. (Without this, a
+    screen's re-read on resume would wipe an optimistic membership echo.)"""
 
     def __init__(self, setlists: list[SetlistVM] | None = None) -> None:
         self.setlists: list[SetlistVM] = list(setlists) if setlists is not None else []
@@ -47,16 +50,41 @@ class FakeSetlistPort:
     def list_setlists(self) -> list[SetlistVM]:
         return list(self.setlists)
 
+    def _replace_tones(self, setlist: str, tones: list[str]) -> None:
+        for i, sl in enumerate(self.setlists):
+            if sl.name == setlist:
+                self.setlists[i] = SetlistVM(
+                    name=sl.name, sync_enabled=sl.sync_enabled, tones=tuple(tones)
+                )
+                return
+
     def add_tone(self, setlist: str, tone_id: str) -> OpResult:
         self.calls.append(("add_tone", (setlist, tone_id)))
+        for sl in self.setlists:
+            if sl.name == setlist and tone_id not in sl.tones:
+                self._replace_tones(setlist, [*sl.tones, tone_id])
+                break
         return OpResult(True, "add_tone ok")
 
     def remove_tone(self, setlist: str, tone_id: str) -> OpResult:
         self.calls.append(("remove_tone", (setlist, tone_id)))
+        for sl in self.setlists:
+            if sl.name == setlist:
+                self._replace_tones(setlist, [t for t in sl.tones if t != tone_id])
+                break
         return OpResult(True, "remove_tone ok")
 
     def move_tone(self, setlist: str, tone_id: str, delta: int) -> OpResult:
         self.calls.append(("move_tone", (setlist, tone_id, delta)))
+        for sl in self.setlists:
+            if sl.name == setlist and tone_id in sl.tones:
+                order = list(sl.tones)
+                i = order.index(tone_id)
+                j = i + delta
+                if 0 <= j < len(order):
+                    order[i], order[j] = order[j], order[i]
+                    self._replace_tones(setlist, order)
+                break
         return OpResult(True, "move_tone ok")
 
 
