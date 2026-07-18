@@ -281,9 +281,15 @@ class RealDevicePort:
             irhash = self._resolve_ir_hash(mapping, ir_name)
             if irhash is None:
                 return OpResult(ok=False, message=f"no registered IR named {ir_name!r}")
+            import os
+
             results = ir_upload.upload_missing_irs(ip, [irhash])
             ok = all(r.get("outcome") != "upload_error" for r in results)
-            msg = f"pushed IR {ir_name!r}" if ok else f"IR {ir_name!r} upload failed"
+            # ir_name may be a raw irhash (the screen pushes by hash so
+            # duplicate display names stay unambiguous) — report the
+            # registered file's stem instead.
+            label = os.path.splitext(os.path.basename(str(mapping.entries[irhash])))[0]
+            msg = f"pushed IR {label!r}" if ok else f"IR {label!r} upload failed"
             return OpResult(ok=ok, message=msg)
 
         return self._op("push_ir", _run)

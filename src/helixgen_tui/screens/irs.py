@@ -133,8 +133,11 @@ class IrsScreen(LibrarianScreen):
         self._local_irs = self.app.core.list_local_irs()
         table = self.query_one(f"#{_LOCAL_TABLE_ID}", DataTable)
         table.clear()
-        for ir in self._local_irs:
-            table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=ir.name)
+        # Row keys are list indices, not names: real libraries routinely hold
+        # many IRs sharing one display name (mic/distance variants), and
+        # DataTable raises DuplicateKey on a repeated key.
+        for index, ir in enumerate(self._local_irs):
+            table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=str(index))
 
     def action_refresh(self) -> None:
         """`r`: re-read the local pane and re-query the device pane (matching
@@ -154,7 +157,7 @@ class IrsScreen(LibrarianScreen):
         if table.row_count == 0:
             return None
         row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        return next((ir for ir in self._local_irs if ir.name == row_key.value), None)
+        return self._local_irs[int(row_key.value)]
 
     # -- device pane (async: DeviceService.query, never a direct port call) --
 
@@ -193,8 +196,8 @@ class IrsScreen(LibrarianScreen):
             return
         self._device_irs = list(result.value)  # type: ignore[arg-type]
         table.clear()
-        for ir in self._device_irs:
-            table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=ir.name)
+        for index, ir in enumerate(self._device_irs):
+            table.add_row(ir.name, ir.pack or "", _short_hash(ir.irhash), key=str(index))
         table.display = True
         placeholder.display = False
 
@@ -203,7 +206,7 @@ class IrsScreen(LibrarianScreen):
         if table.row_count == 0:
             return None
         row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        return next((ir for ir in self._device_irs if ir.name == row_key.value), None)
+        return self._device_irs[int(row_key.value)]
 
     # -- offline guard is inherited from LibrarianScreen._offline ----------
 
@@ -226,9 +229,11 @@ class IrsScreen(LibrarianScreen):
         if ir is None:
             return
         device = self.app.core.device
-        ir_name = ir.name
+        # Push by irhash, not display name: names are routinely duplicated
+        # (see refresh_local_irs), and core resolves an exact hash key first.
+        ir_ref = ir.irhash or ir.name
         self.app.device_service.run(
-            "push_ir", lambda: device.push_ir(ir_name), self._after_mutation
+            "push_ir", lambda: device.push_ir(ir_ref), self._after_mutation
         )
 
     # -- delete (confirm) --------------------------------------------------
