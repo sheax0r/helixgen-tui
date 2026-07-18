@@ -85,7 +85,7 @@ NOT MODEL DATA (out of scope — no interpolated model strings):
 
 ### Task 4: confirm complete
 
-- [ ] Re-run the Task 1 grep; every model-data surface is now `Text` /
+- [x] Re-run the Task 1 grep; every model-data surface is now `Text` /
       `markup=False` / escaped, or explicitly justified as already-safe. No
       surface left behind (especially in the new signal-flow editor code).
 
