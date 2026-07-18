@@ -120,7 +120,7 @@ async def test_p_pushes_selected_local_ir():
         await pilot.pause()
         await pilot.press("p")  # cursor row 0 = V30 Cab
         await pilot.pause()
-        assert ("push_ir", ("V30 Cab",)) in port.calls
+        assert ("push_ir", ("deadbeefcafef00d",)) in port.calls
         footer = app.screen.query_one(StatusFooter)
         assert "push_ir ok" in footer.last_action
 
@@ -319,7 +319,7 @@ async def test_push_under_real_thread_spawn_refreshes_device_pane_without_crashi
         local_table.focus()
         await pilot.pause()
         await pilot.press("p")  # cursor row 0 = V30 Cab
-        await _wait_until(pilot, lambda: ("push_ir", ("V30 Cab",)) in port.calls)
+        await _wait_until(pilot, lambda: ("push_ir", ("deadbeefcafef00d",)) in port.calls)
         await _wait_until(pilot, lambda: app.last_action == "push_ir ok")
 
         footer = app.screen.query_one(StatusFooter)

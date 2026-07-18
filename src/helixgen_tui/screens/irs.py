@@ -229,9 +229,11 @@ class IrsScreen(LibrarianScreen):
         if ir is None:
             return
         device = self.app.core.device
-        ir_name = ir.name
+        # Push by irhash, not display name: names are routinely duplicated
+        # (see refresh_local_irs), and core resolves an exact hash key first.
+        ir_ref = ir.irhash or ir.name
         self.app.device_service.run(
-            "push_ir", lambda: device.push_ir(ir_name), self._after_mutation
+            "push_ir", lambda: device.push_ir(ir_ref), self._after_mutation
         )
 
     # -- delete (confirm) --------------------------------------------------
