@@ -96,17 +96,17 @@ write) for every new verb.
 **Files:** `core/ports.py`, `core/editor.py`, `tests/fake_core.py`,
 `tests/core/test_editor.py`.
 
-- [ ] Add `EditorPort.set_bypass(self, tone_id: str, block: BlockVM, enabled: bool) -> OpResult`
+- [x] Add `EditorPort.set_bypass(self, tone_id: str, block: BlockVM, enabled: bool) -> OpResult`
   (address the block by its existing `(model, lane=@path, pos=@position)`
   coordinates, same mapping `save_params` uses; ambiguous multi-flow target
   fails safe with `MutateError` → `OpResult(ok=False, ...)`).
-- [ ] Failing adapter test: toggling a block's `enabled` writes the `.hsp`
+- [x] Failing adapter test: toggling a block's `enabled` writes the `.hsp`
   (assert via `get_chain`), and an ambiguous/dual-slot target fails safe with no
   write.
-- [ ] Run, confirm fail.
-- [ ] Implement over the `helixgen.mutate` bypass verb, atomic write.
-- [ ] `FakeEditorPort.set_bypass` records `("set_bypass", (tone_id, coords, enabled))`.
-- [ ] Run tests, confirm pass. Commit.
+- [x] Run, confirm fail.
+- [x] Implement over the `helixgen.mutate` bypass verb, atomic write.
+- [x] `FakeEditorPort.set_bypass` records `("set_bypass", (tone_id, coords, enabled))`.
+- [x] Run tests, confirm pass. Commit.
 
 ### Task 4: Block add / remove / swap + catalogue (serial paths; parallel refuses)
 

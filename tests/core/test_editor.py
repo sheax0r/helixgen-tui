@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from helixgen_tui.core.editor import RealEditor
-from helixgen_tui.core.models import ParamChange
+from helixgen_tui.core.models import BlockVM, ParamChange
 
 _DRIVE = "HD2_DrvScream808"
 _AMP = "HD2_AmpBrit2204Custom"
@@ -51,6 +51,22 @@ def _body():
     }
 
 
+def _dual_flow_body():
+    """A body with two DSP flows, each carrying the drive at the same lane+pos —
+    so addressing it by (model, lane, pos) alone is ambiguous."""
+    flow = {
+        "@enabled": True,
+        "b01": {"type": "fx", "position": 1, "path": 0, "@enabled": _wrapped(True),
+                "slot": [_slot(_DRIVE, {"Drive": 0.10, "Tone": 0.50, "Level": 0.60})]},
+    }
+    import copy
+
+    return {
+        "meta": {"name": "Ambiguous Tone"},
+        "preset": {"flow": [copy.deepcopy(flow), copy.deepcopy(flow)]},
+    }
+
+
 @pytest.fixture
 def chain_tone(tmp_home):
     """Register a tone with a real flow and seed its blocks in the library.
@@ -87,6 +103,24 @@ def chain_tone(tmp_home):
             )
         )
     lib.rebuild_index()
+
+    manifest = SetlistManifest.load()
+    name = manifest.register_tone(hsp_path)
+    manifest.save()
+    return name
+
+
+@pytest.fixture
+def ambiguous_tone(chain_tone):
+    """Register a second tone whose drive is placed identically in two flows.
+
+    Depends on ``chain_tone`` so the ``_DRIVE`` Block is already in the library.
+    """
+    from helixgen import home, hsp
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = home.tones_dir() / "ambiguous-tone.hsp"
+    hsp.write_hsp(hsp_path, _dual_flow_body())
 
     manifest = SetlistManifest.load()
     name = manifest.register_tone(hsp_path)
@@ -170,6 +204,54 @@ def test_set_output_no_hsp_tone_fails_soft(tmp_home):
 
     preferences.scaffold_default()
     result = RealEditor().set_output("ghost", level=0.0, pan=0.5)
+    assert not result.ok
+
+
+def test_set_bypass_toggles_enabled(chain_tone):
+    editor = RealEditor()
+    drive = editor.get_chain(chain_tone).paths[0].blocks[0]
+    assert drive.enabled is True
+
+    result = editor.set_bypass(chain_tone, drive, enabled=False)
+    assert result.ok, result.message
+
+    reread = RealEditor().get_chain(chain_tone).paths[0].blocks[0]
+    assert reread.enabled is False
+
+    # and back on again
+    assert editor.set_bypass(chain_tone, reread, enabled=True).ok
+    assert RealEditor().get_chain(chain_tone).paths[0].blocks[0].enabled is True
+
+
+def test_set_bypass_ambiguous_target_fails_without_writing(ambiguous_tone):
+    from pathlib import Path
+
+    from helixgen import hsp
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(ambiguous_tone))
+    before = hsp_path.read_bytes()
+
+    # same model at the same lane+pos across two DSP flows: no flow-index
+    # narrowing, so the write must refuse rather than toggle the wrong slot.
+    ghost = BlockVM(
+        model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=()
+    )
+    result = RealEditor().set_bypass(ambiguous_tone, ghost, enabled=False)
+    assert not result.ok
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+    # sanity: a raw read of the fixture confirms both flows carry the drive
+    body = hsp.read_hsp(hsp_path)
+    assert len(body["preset"]["flow"]) == 2
+
+
+def test_set_bypass_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    ghost = BlockVM(model="X", display="X", position=1, path=0, enabled=True, params=())
+    result = RealEditor().set_bypass("ghost", ghost, enabled=False)
     assert not result.ok
 
 

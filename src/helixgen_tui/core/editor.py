@@ -125,6 +125,29 @@ class RealEditor:
             return OutputVM(level=float(gain), pan=float(pan))
         return None
 
+    @classmethod
+    def _bypass_state(cls, body: dict) -> dict[tuple[int, int], bool]:
+        """Map ``(lane, pos)`` to each block's device-authoritative bypass state,
+        read from the ``bNN``-level ``@enabled`` wrapper — the slot Stadium reads
+        for bypass, and the slot ``set_enabled`` writes. (``extract_blocks_from_hsp``
+        surfaces only the *slot*-level ``@enabled``, which the bypass verb leaves
+        untouched, so we read the block level directly here.)"""
+        state: dict[tuple[int, int], bool] = {}
+        flow = (body.get("preset") or {}).get("flow") or []
+        for path_dict in flow:
+            if not isinstance(path_dict, dict):
+                continue
+            for key, raw_block in path_dict.items():
+                if not (isinstance(key, str) and key.startswith("b") and key[1:].isdigit()):
+                    continue
+                if not isinstance(raw_block, dict) or "@enabled" not in raw_block:
+                    continue
+                lane = int(raw_block.get("path", 0) or 0)
+                pos = int(raw_block.get("position", 0) or 0)
+                enabled = cls._unwrap(raw_block["@enabled"])
+                state[(lane, pos)] = bool(enabled)
+        return state
+
     @staticmethod
     def _read_input_source(body: dict) -> str | None:
         """The head-node instrument source (``inst1``/``inst2``/``both``/``none``)
@@ -163,6 +186,7 @@ class RealEditor:
         body = hsp.read_hsp(path)
         raw_blocks = hsp.extract_blocks_from_hsp(body)
         lib = self._load_library()
+        bypass = self._bypass_state(body)
 
         # Group blocks by lane (@path), preserving chain order within each lane.
         by_path: dict[int, list[BlockVM]] = {}
@@ -170,7 +194,9 @@ class RealEditor:
             model = str(raw.get("@model", ""))
             lane = int(raw.get("@path", 0) or 0)
             position = int(raw.get("@position", 0) or 0)
-            enabled = bool(raw.get("@enabled", True))
+            # Prefer the bNN-level bypass state (what the device + the bypass verb
+            # use); fall back to the slot-level flag extract surfaces.
+            enabled = bypass.get((lane, position), bool(raw.get("@enabled", True)))
             schema = self._schema_for(lib, model)
 
             params: list[ParamVM] = []
@@ -292,3 +318,42 @@ class RealEditor:
             return OpResult(ok=False, message=f"could not write tone: {exc}")
 
         return OpResult(ok=True, message="saved output")
+
+    def set_bypass(self, tone_id: str, block: BlockVM, enabled: bool) -> OpResult:
+        """Toggle one block's bypass/enable state in the library ``.hsp``,
+        addressing it by the same ``(model, lane=@path, pos=@position)``
+        coordinates ``save_params`` uses. An ambiguous target (same model at the
+        same lane+pos across two DSP flows) raises ``MutateError``, surfaced as a
+        failed op with no write — never a wrong-slot toggle. Atomic: builds the
+        body in memory and only writes on full success."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.set_enabled(
+                body,
+                block.model,
+                enabled,
+                lib,
+                lane=block.path,
+                pos=block.position,
+            )
+        except Exception as exc:  # noqa: BLE001 — incl. the ambiguous-target refusal
+            verb = "enable" if enabled else "bypass"
+            return OpResult(ok=False, message=f"could not {verb} {block.model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="enabled block" if enabled else "bypassed block")

@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import replace as _replace
 
 from helixgen_tui.core.models import (
+    BlockVM,
     ChainVM,
     DeviceStateVM,
     IrVM,
@@ -19,6 +20,7 @@ from helixgen_tui.core.models import (
     OpResult,
     OutputVM,
     ParamChange,
+    PathVM,
     SetlistVM,
     ToneVM,
 )
@@ -232,6 +234,33 @@ class FakeEditorPort:
         if chain is not None:
             self.chains[tone_id] = _replace(chain, output=OutputVM(level=float(level), pan=pan))
         return OpResult(ok=True, message="saved output")
+
+    def set_bypass(self, tone_id: str, block: BlockVM, enabled: bool) -> OpResult:
+        coords = (block.model, block.path, block.position)
+        self.calls.append(("set_bypass", (tone_id, coords, enabled)))
+        chain = self.chains.get(tone_id)
+        if chain is not None:
+            self.chains[tone_id] = _set_block_enabled(chain, coords, enabled)
+        return OpResult(ok=True, message="enabled block" if enabled else "bypassed block")
+
+
+def _set_block_enabled(chain: ChainVM, coords: tuple, enabled: bool) -> ChainVM:
+    """Return a copy of ``chain`` with the block at ``coords`` (model, path, pos)
+    toggled to ``enabled`` (used by FakeEditorPort to mirror a bypass write)."""
+    model, lane, pos = coords
+    new_paths = tuple(
+        PathVM(
+            path=path.path,
+            blocks=tuple(
+                _replace(b, enabled=enabled)
+                if (b.model, b.path, b.position) == (model, lane, pos)
+                else b
+                for b in path.blocks
+            ),
+        )
+        for path in chain.paths
+    )
+    return _replace(chain, paths=new_paths)
 
 
 def _apply_changes(chain: ChainVM, changes: list[ParamChange]) -> ChainVM:
