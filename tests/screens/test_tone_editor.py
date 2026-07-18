@@ -656,6 +656,33 @@ async def test_output_edit_records_set_output_and_dirty_then_saves():
         assert not app.screen.is_dirty
 
 
+async def test_mixed_save_surfaces_param_failure_not_output_success():
+    """When both a param edit and an output edit are pending and the param
+    save fails while the output save succeeds, the footer must show the
+    failure — not let the later "saved output" success clobber it — and the
+    edits must stay dirty."""
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        await pilot.press("tab")  # focus params
+        await pilot.press("right")  # nudge Drive -> pending param edit
+        await pilot.press("tab")  # back to chain nav
+        await pilot.press("right")  # -> amp
+        await pilot.press("right")  # -> output node
+        await pilot.press("tab")  # focus params
+        await pilot.press("down")  # select Pan
+        await pilot.press("right")  # nudge pan -> pending output edit
+        assert app.screen.is_dirty
+        editor.fail_save = True
+        await pilot.press("s")
+        await pilot.pause()
+        assert app._last_action == "save failed (fake)"
+        # Param edit was not persisted, so the screen stays dirty.
+        assert app.screen.is_dirty
+
+
 async def test_input_node_is_read_only():
     editor = FakeEditorPort(chains={"tone-1": _chain()})
     core = FakeCore(tones=list(_TONES), editor=editor)

@@ -758,16 +758,19 @@ class ToneEditorScreen(Screen):
         if not self._edits and self._output_edit is None:
             self.app.report_op(OpResult(ok=True, message="nothing to save"))
             return
-        all_ok = True
+        results: list[OpResult] = []
         if self._edits:
-            result = self.app.core.editor.save_params(self._tone_id, self._pending_changes())
-            self.app.report_op(result)
-            all_ok = all_ok and result.ok
+            results.append(
+                self.app.core.editor.save_params(self._tone_id, self._pending_changes())
+            )
         if self._output_edit is not None:
             level, pan = self._output_edit
-            result = self.app.core.editor.set_output(self._tone_id, level, pan)
-            self.app.report_op(result)
-            all_ok = all_ok and result.ok
+            results.append(self.app.core.editor.set_output(self._tone_id, level, pan))
+        all_ok = all(r.ok for r in results)
+        # Report the first failure so a later success can't clobber it in the
+        # footer's last-writer-wins text; otherwise report the success message.
+        failure = next((r for r in results if not r.ok), None)
+        self.app.report_op(failure if failure is not None else results[-1])
         if all_ok:
             # Rebase to the saved values so the display stays and dirty clears.
             self._reload_chain()
