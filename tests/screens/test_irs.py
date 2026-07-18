@@ -276,3 +276,56 @@ async def test_capital_r_offline_refuses_without_showing_input():
         assert port.calls == []
         footer = app.screen.query_one(StatusFooter)
         assert "offline" in footer.last_action.lower()
+
+
+# --- real thread-worker spawn: the class of bug the fix addresses ----------
+
+
+async def _wait_until(pilot, cond, timeout=3.0):
+    """Pump the event loop until ``cond()`` holds (or fail after ``timeout``)."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        if cond():
+            return
+    raise AssertionError("condition not met within timeout")
+
+
+async def test_push_under_real_thread_spawn_refreshes_device_pane_without_crashing():
+    """The full push-mutation path must marshal both the footer report and the
+    device-pane refresh back to the UI thread: under the REAL Textual
+    thread-worker spawn, DeviceService.run's (and query's) done callbacks run
+    off-thread, so touching widgets or making a second device call directly
+    from there would corrupt Textual's UI state instead of just failing a
+    synchronous-spawn test."""
+    port = FakeDevicePort(state=_CONNECTED, device_irs=list(_DEVICE_IRS))
+    core = FakeCore(local_irs=list(_LOCAL_IRS), device=port)
+    app = HelixgenTuiApp(core)  # default (real Textual thread-worker) spawn
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await _wait_until(
+            pilot,
+            lambda: app.device_service is not None
+            and app.device_service.state.status == "connected",
+        )
+
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        await _wait_until(pilot, lambda: device_table.display is True)
+        assert device_table.row_count == 1
+
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        local_table.focus()
+        await pilot.pause()
+        await pilot.press("p")  # cursor row 0 = V30 Cab
+        await _wait_until(pilot, lambda: ("push_ir", ("V30 Cab",)) in port.calls)
+        await _wait_until(pilot, lambda: app.last_action == "push_ir ok")
+
+        footer = app.screen.query_one(StatusFooter)
+        assert "push_ir ok" in footer.last_action
+        # The post-mutation refresh round-tripped through
+        # RefreshDeviceIrsRequested -> DeviceService.query -> DeviceIrsQueryReady
+        # without crashing, leaving the (still-connected) device pane intact.
+        assert device_table.display is True
+        assert device_table.row_count == 1
