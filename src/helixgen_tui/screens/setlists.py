@@ -233,16 +233,19 @@ class SetlistsScreen(LibrarianScreen):
         tone_id = self._selected_tone_id()
         if setlist is None or tone_id is None:
             return
-        result = self.app.core.setlists.move_tone(setlist.name, tone_id, delta)
-        self.app.report_op(result)
-        if not result.ok:
-            return
         order = self._tone_order.get(setlist.name, [])
         if tone_id not in order:
             return
         index = order.index(tone_id)
         target = index + delta
         if not 0 <= target < len(order):
+            # Already at the edge: nothing would move. Skip the port call
+            # entirely — calling it here would report a misleading "ok" for
+            # a no-op move (FakeSetlistPort always answers ok=True).
+            return
+        result = self.app.core.setlists.move_tone(setlist.name, tone_id, delta)
+        self.app.report_op(result)
+        if not result.ok:
             return
         order[index], order[target] = order[target], order[index]
         self._rebuild_tones_table()

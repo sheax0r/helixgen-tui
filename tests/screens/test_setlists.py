@@ -143,6 +143,41 @@ async def test_k_moves_tone_up():
         assert _table_rows(right) == ["Foo Fighters - Everlong", "AC/DC - Back in Black"]
 
 
+async def test_j_on_last_row_is_a_noop_no_port_call_no_change():
+    core = FakeCore(tones=list(_TONES), setlists=list(_SETLISTS))
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        tables = app.screen.query(DataTable)
+        right = tables[1]
+        right.focus()
+        right.move_cursor(row=1)  # last row = tone-2, already at the bottom
+        await pilot.pause()
+
+        await pilot.press("J")
+        await pilot.pause()
+
+        assert core.setlists.calls == []
+        assert _table_rows(right) == ["AC/DC - Back in Black", "Foo Fighters - Everlong"]
+
+
+async def test_k_on_first_row_is_a_noop_no_port_call_no_change():
+    core = FakeCore(tones=list(_TONES), setlists=list(_SETLISTS))
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        tables = app.screen.query(DataTable)
+        right = tables[1]
+        right.focus()  # cursor already on row 0 = tone-1, already at the top
+        await pilot.pause()
+
+        await pilot.press("K")
+        await pilot.pause()
+
+        assert core.setlists.calls == []
+        assert _table_rows(right) == ["AC/DC - Back in Black", "Foo Fighters - Everlong"]
+
+
 async def test_d_removes_selected_tone():
     core = FakeCore(tones=list(_TONES), setlists=list(_SETLISTS))
     app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
