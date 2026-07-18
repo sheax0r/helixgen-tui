@@ -113,8 +113,22 @@ class PathVM:
 
 
 @dataclass(frozen=True, slots=True)
+class OutputVM:
+    """The chain's terminal output endpoint: main-out ``level`` (dB, ~−120..20)
+    and ``pan`` (0..1, 0.5 = centre). Read+write via ``set_flow_param``."""
+
+    level: float
+    pan: float
+
+
+@dataclass(frozen=True, slots=True)
 class ChainVM:
-    """A tone's full editable chain plus the header metadata the editor shows."""
+    """A tone's full editable chain plus the header metadata the editor shows.
+
+    ``output`` is the terminal output node (``None`` when the tone has no
+    readable output endpoint), and ``input_source`` is the head-node instrument
+    source — one of ``"inst1"``/``"inst2"``/``"both"``/``"none"`` (``None`` when
+    not determinable). Both default to ``None`` so pre-v1 callers stay valid."""
 
     tone_id: str
     name: str
@@ -122,6 +136,17 @@ class ChainVM:
     description: str | None
     setlists: tuple[str, ...]
     paths: tuple[PathVM, ...]
+    output: OutputVM | None = None
+    input_source: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BlockCatalogVM:
+    """The pickable models in one category, for the block-add / swap picker.
+    ``models`` is ``(model_id, display)`` pairs in the library's order."""
+
+    category: str
+    models: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,6 +42,15 @@ tabbed shell:
 
 Press `?` anywhere for the full key-binding reference, `q` to quit.
 
+**Tone editor:** press `enter` on a Library tone to open its signal chain. The
+chain renders left-to-right — an input node, the blocks (both DSP paths stacked
+when parallel-routed), then the output node. Arrow keys walk the chain; `tab`
+switches to the params inspector, where `left`/`right` nudge a value and `enter`
+types one. Structural keys: `a` add a block, `x` remove, `b` bypass/enable, `w`
+swap the model. Selecting the output node edits its level/pan; the input node's
+source is read-only. Add/remove refuse on a parallel-routed path. Edits write to
+the local library file on `s` — never to the device.
+
 **Offline-first:** the app works fully with no device on the LAN — Library,
 Setlists, and IRs stay browsable from local state. Device-mutating actions
 (activate, sync, push, backup, restore, ...) simply refuse with a reason in
@@ -59,8 +68,9 @@ user never sees or types.
 
 The long-term goal is full parity with the Helix Stadium desktop app
 (tracked in helixgen-core's `docs/stadium-app-parity.md`); this v1 ships the
-librarian, with more screens (signal-flow editor, global settings,
-tuner/meters) to follow. See `docs/BACKLOG.md`.
+librarian and the tone editor (param editing plus signal-flow editing —
+block add/remove/swap, bypass, output level/pan), with more screens (global
+settings, tuner/meters) to follow. See `docs/BACKLOG.md`.
 
 ## Development
 

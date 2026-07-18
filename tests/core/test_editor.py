@@ -11,9 +11,10 @@ from __future__ import annotations
 import pytest
 
 from helixgen_tui.core.editor import RealEditor
-from helixgen_tui.core.models import ParamChange
+from helixgen_tui.core.models import BlockVM, ParamChange
 
 _DRIVE = "HD2_DrvScream808"
+_DRIVE2 = "HD2_DrvMinotaur"
 _AMP = "HD2_AmpBrit2204Custom"
 
 
@@ -42,10 +43,50 @@ def _body():
                     "b04": {"type": "amp", "position": 4, "path": 0, "@enabled": _wrapped(False),
                             "slot": [_slot(_AMP, {"Drive": 0.60, "Bass": 0.50}, enabled=False)]},
                     "b13": {"type": "output", "position": 13, "path": 0,
-                            "slot": [{"model": "P35_OutputMatrix", "params": {}, "version": 0}]},
+                            "slot": [{"model": "P35_OutputMatrix",
+                                      "params": {"gain": _wrapped(3.0), "pan": _wrapped(0.25)},
+                                      "version": 0}]},
                 }
             ]
         },
+    }
+
+
+def _parallel_body():
+    """A serial-looking flow that carries a ``split`` structural block in lane 0,
+    so ``add_block``/``remove_block`` must refuse (parallel-routed path)."""
+    return {
+        "meta": {"name": "Parallel Tone"},
+        "preset": {
+            "flow": [
+                {
+                    "@enabled": True,
+                    "b01": {"type": "fx", "position": 1, "path": 0, "@enabled": _wrapped(True),
+                            "slot": [_slot(_DRIVE, {"Drive": 0.10, "Tone": 0.50, "Level": 0.60})]},
+                    "b02": {"type": "split", "position": 2, "path": 0},
+                    "b13": {"type": "output", "position": 13, "path": 0,
+                            "slot": [{"model": "P35_OutputMatrix",
+                                      "params": {"gain": _wrapped(3.0), "pan": _wrapped(0.25)},
+                                      "version": 0}]},
+                }
+            ]
+        },
+    }
+
+
+def _dual_flow_body():
+    """A body with two DSP flows, each carrying the drive at the same lane+pos —
+    so addressing it by (model, lane, pos) alone is ambiguous."""
+    flow = {
+        "@enabled": True,
+        "b01": {"type": "fx", "position": 1, "path": 0, "@enabled": _wrapped(True),
+                "slot": [_slot(_DRIVE, {"Drive": 0.10, "Tone": 0.50, "Level": 0.60})]},
+    }
+    import copy
+
+    return {
+        "meta": {"name": "Ambiguous Tone"},
+        "preset": {"flow": [copy.deepcopy(flow), copy.deepcopy(flow)]},
     }
 
 
@@ -84,7 +125,54 @@ def chain_tone(tmp_home):
                 first_seen={},
             )
         )
+    # A second drive model, catalogued but not placed — a valid add/swap target.
+    lib.save_block(
+        Block(
+            model_id=_DRIVE2,
+            category="drive",
+            display_name="Minotaur",
+            params={"Drive": {"type": "float", "default": 0.5, "observed_range": [0.0, 1.0]}},
+            exemplar={"Drive": 0.5},
+            first_seen={},
+        )
+    )
     lib.rebuild_index()
+
+    manifest = SetlistManifest.load()
+    name = manifest.register_tone(hsp_path)
+    manifest.save()
+    return name
+
+
+@pytest.fixture
+def parallel_tone(chain_tone):
+    """Register a tone whose lane 0 carries a split, so structural adds refuse.
+
+    Depends on ``chain_tone`` so the ``_DRIVE`` Block is already catalogued.
+    """
+    from helixgen import home, hsp
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = home.tones_dir() / "parallel-tone.hsp"
+    hsp.write_hsp(hsp_path, _parallel_body())
+
+    manifest = SetlistManifest.load()
+    name = manifest.register_tone(hsp_path)
+    manifest.save()
+    return name
+
+
+@pytest.fixture
+def ambiguous_tone(chain_tone):
+    """Register a second tone whose drive is placed identically in two flows.
+
+    Depends on ``chain_tone`` so the ``_DRIVE`` Block is already in the library.
+    """
+    from helixgen import home, hsp
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = home.tones_dir() / "ambiguous-tone.hsp"
+    hsp.write_hsp(hsp_path, _dual_flow_body())
 
     manifest = SetlistManifest.load()
     name = manifest.register_tone(hsp_path)
@@ -115,6 +203,17 @@ def test_get_chain_lists_blocks_and_params(chain_tone):
     assert amp.enabled is False  # bypassed block surfaces its state
 
 
+def test_get_chain_exposes_output_and_input_source(chain_tone):
+    chain = RealEditor().get_chain(chain_tone)
+    assert chain is not None
+    # output endpoint: main-out level (dB) + pan read from the .hsp
+    assert chain.output is not None
+    assert chain.output.level == pytest.approx(3.0)
+    assert chain.output.pan == pytest.approx(0.25)
+    # input head node: the instrument source
+    assert chain.input_source == "inst1"
+
+
 def test_get_chain_returns_none_for_unknown_tone(chain_tone):
     assert RealEditor().get_chain("no-such-tone") is None
 
@@ -132,6 +231,80 @@ def test_save_params_persists_to_hsp(chain_tone):
     drive = chain.paths[0].blocks[0]
     val = next(p.value for p in drive.params if p.name == "Drive")
     assert val == pytest.approx(0.85)
+
+
+def test_set_output_persists_level_and_pan(chain_tone):
+    editor = RealEditor()
+    result = editor.set_output(chain_tone, level=-6.0, pan=0.75)
+    assert result.ok, result.message
+
+    chain = RealEditor().get_chain(chain_tone)
+    assert chain.output.level == pytest.approx(-6.0)
+    assert chain.output.pan == pytest.approx(0.75)
+
+
+def test_set_output_clamps_pan(chain_tone):
+    editor = RealEditor()
+    assert editor.set_output(chain_tone, level=0.0, pan=1.5).ok
+    assert RealEditor().get_chain(chain_tone).output.pan == pytest.approx(1.0)
+    assert editor.set_output(chain_tone, level=0.0, pan=-0.5).ok
+    assert RealEditor().get_chain(chain_tone).output.pan == pytest.approx(0.0)
+
+
+def test_set_output_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    result = RealEditor().set_output("ghost", level=0.0, pan=0.5)
+    assert not result.ok
+
+
+def test_set_bypass_toggles_enabled(chain_tone):
+    editor = RealEditor()
+    drive = editor.get_chain(chain_tone).paths[0].blocks[0]
+    assert drive.enabled is True
+
+    result = editor.set_bypass(chain_tone, drive, enabled=False)
+    assert result.ok, result.message
+
+    reread = RealEditor().get_chain(chain_tone).paths[0].blocks[0]
+    assert reread.enabled is False
+
+    # and back on again
+    assert editor.set_bypass(chain_tone, reread, enabled=True).ok
+    assert RealEditor().get_chain(chain_tone).paths[0].blocks[0].enabled is True
+
+
+def test_set_bypass_ambiguous_target_fails_without_writing(ambiguous_tone):
+    from pathlib import Path
+
+    from helixgen import hsp
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(ambiguous_tone))
+    before = hsp_path.read_bytes()
+
+    # same model at the same lane+pos across two DSP flows: no flow-index
+    # narrowing, so the write must refuse rather than toggle the wrong slot.
+    ghost = BlockVM(
+        model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=()
+    )
+    result = RealEditor().set_bypass(ambiguous_tone, ghost, enabled=False)
+    assert not result.ok
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+    # sanity: a raw read of the fixture confirms both flows carry the drive
+    body = hsp.read_hsp(hsp_path)
+    assert len(body["preset"]["flow"]) == 2
+
+
+def test_set_bypass_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    ghost = BlockVM(model="X", display="X", position=1, path=0, enabled=True, params=())
+    result = RealEditor().set_bypass("ghost", ghost, enabled=False)
+    assert not result.ok
 
 
 def test_save_params_empty_is_a_noop_ok(chain_tone):
@@ -169,4 +342,144 @@ def test_save_params_no_hsp_tone_fails_soft(tmp_home):
     result = RealEditor().save_params(
         "ghost", [ParamChange(model="X", path=0, position=1, param="p", value=1)]
     )
+    assert not result.ok
+
+
+# --- Task 4: structural edits (add / remove / swap + catalogue) ---------------
+
+
+def test_list_block_catalog_groups_models_by_category(chain_tone):
+    catalog = RealEditor().list_block_catalog()
+    by_cat = {c.category: dict(c.models) for c in catalog}
+    assert "drive" in by_cat and "amp" in by_cat
+    assert _DRIVE in by_cat["drive"]
+    assert _DRIVE2 in by_cat["drive"]
+    assert _AMP in by_cat["amp"]
+    # display carried through for the picker
+    assert by_cat["drive"][_DRIVE2] == "Minotaur"
+
+
+def test_add_block_serial_inserts_after(chain_tone):
+    editor = RealEditor()
+    drive = editor.get_chain(chain_tone).paths[0].blocks[0]
+    result = editor.add_block(chain_tone, after=drive, model=_DRIVE2)
+    assert result.ok, result.message
+
+    models = [b.model for b in RealEditor().get_chain(chain_tone).paths[0].blocks]
+    assert _DRIVE2 in models
+    # inserted immediately after the drive, before the amp
+    assert models == [_DRIVE, _DRIVE2, _AMP]
+
+
+def test_remove_block_serial_deletes(chain_tone):
+    editor = RealEditor()
+    drive = editor.get_chain(chain_tone).paths[0].blocks[0]
+    result = editor.remove_block(chain_tone, drive)
+    assert result.ok, result.message
+
+    models = [b.model for b in RealEditor().get_chain(chain_tone).paths[0].blocks]
+    assert _DRIVE not in models
+    assert models == [_AMP]
+
+
+def test_swap_model_replaces_in_place(chain_tone):
+    editor = RealEditor()
+    drive = editor.get_chain(chain_tone).paths[0].blocks[0]
+    result = editor.swap_model(chain_tone, drive, model=_DRIVE2)
+    assert result.ok, result.message
+
+    blocks = RealEditor().get_chain(chain_tone).paths[0].blocks
+    # same slot (pos 1), new model; amp untouched
+    assert blocks[0].model == _DRIVE2
+    assert blocks[0].position == 1
+    assert [b.model for b in blocks] == [_DRIVE2, _AMP]
+
+
+def test_add_block_parallel_refuses_without_writing(parallel_tone):
+    from pathlib import Path
+
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(parallel_tone))
+    before = hsp_path.read_bytes()
+
+    result = RealEditor().add_block(parallel_tone, after=None, model=_DRIVE2)
+    assert not result.ok
+    assert "parallel" in result.message.lower()
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+
+def test_remove_block_parallel_refuses_without_writing(parallel_tone):
+    from pathlib import Path
+
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(parallel_tone))
+    before = hsp_path.read_bytes()
+
+    ghost = BlockVM(model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=())
+    result = RealEditor().remove_block(parallel_tone, ghost)
+    assert not result.ok
+    assert "parallel" in result.message.lower()
+    assert hsp_path.read_bytes() == before
+
+
+def test_remove_block_ambiguous_target_fails_without_writing(ambiguous_tone):
+    from pathlib import Path
+
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(ambiguous_tone))
+    before = hsp_path.read_bytes()
+
+    # same model at the same lane+pos across two DSP flows: deleting by
+    # (model, lane, pos) alone is ambiguous, so it must refuse rather than
+    # delete the wrong slot.
+    ghost = BlockVM(
+        model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=()
+    )
+    result = RealEditor().remove_block(ambiguous_tone, ghost)
+    assert not result.ok
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+
+def test_swap_model_ambiguous_target_fails_without_writing(ambiguous_tone):
+    from pathlib import Path
+
+    from helixgen.device.manifest import SetlistManifest
+
+    hsp_path = Path(SetlistManifest.load().tone_path(ambiguous_tone))
+    before = hsp_path.read_bytes()
+
+    ghost = BlockVM(
+        model=_DRIVE, display=_DRIVE, position=1, path=0, enabled=True, params=()
+    )
+    result = RealEditor().swap_model(ambiguous_tone, ghost, model=_DRIVE2)
+    assert not result.ok
+    assert hsp_path.read_bytes() == before  # atomic: disk untouched
+
+
+def test_add_block_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    result = RealEditor().add_block("ghost", after=None, model="X")
+    assert not result.ok
+
+
+def test_remove_block_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    ghost = BlockVM(model="X", display="X", position=1, path=0, enabled=True, params=())
+    result = RealEditor().remove_block("ghost", ghost)
+    assert not result.ok
+
+
+def test_swap_model_no_hsp_tone_fails_soft(tmp_home):
+    from helixgen import preferences
+
+    preferences.scaffold_default()
+    ghost = BlockVM(model="X", display="X", position=1, path=0, enabled=True, params=())
+    result = RealEditor().swap_model("ghost", ghost, model="Y")
     assert not result.ok

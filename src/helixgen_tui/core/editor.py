@@ -22,9 +22,11 @@ from __future__ import annotations
 
 from helixgen_tui.core.library import RealLibrary
 from helixgen_tui.core.models import (
+    BlockCatalogVM,
     BlockVM,
     ChainVM,
     OpResult,
+    OutputVM,
     ParamChange,
     ParamVM,
     PathVM,
@@ -88,6 +90,84 @@ class RealEditor:
         return getattr(block, "params", {}) or {}
 
     @staticmethod
+    def _unwrap(wrapped):
+        """Unwrap a ``.hsp`` param value (``{"value": x}`` / stereo / plain)."""
+        if not isinstance(wrapped, dict):
+            return wrapped
+        if "value" in wrapped:
+            return wrapped["value"]
+        one = wrapped.get("1")
+        if isinstance(one, dict) and "value" in one:
+            return one["value"]
+        return wrapped
+
+    @classmethod
+    def _read_output(cls, body: dict) -> OutputVM | None:
+        """The terminal main-out endpoint's level (dB) + pan, read from the
+        lane-0 ``b13`` output slot, falling back to the device defaults for any
+        param the export omits. ``None`` when no output endpoint is present."""
+        from helixgen.mutate import flowparams
+
+        flow = (body.get("preset") or {}).get("flow") or []
+        for path_dict in flow:
+            if not isinstance(path_dict, dict):
+                continue
+            b13 = path_dict.get("b13")
+            if not (isinstance(b13, dict) and b13.get("type") == "output" and b13.get("slot")):
+                continue
+            params = b13["slot"][0].get("params") or {}
+            defaults = flowparams.OUTPUT_HSP_DEFAULTS
+            gain = cls._unwrap(params.get("gain")) if "gain" in params else defaults["gain"]
+            pan = cls._unwrap(params.get("pan")) if "pan" in params else defaults["pan"]
+            if not isinstance(gain, (int, float)):
+                gain = defaults["gain"]
+            if not isinstance(pan, (int, float)):
+                pan = defaults["pan"]
+            return OutputVM(level=float(gain), pan=float(pan))
+        return None
+
+    @classmethod
+    def _bypass_state(cls, body: dict) -> dict[tuple[int, int], bool]:
+        """Map ``(lane, pos)`` to each block's device-authoritative bypass state,
+        read from the ``bNN``-level ``@enabled`` wrapper — the slot Stadium reads
+        for bypass, and the slot ``set_enabled`` writes. (``extract_blocks_from_hsp``
+        surfaces only the *slot*-level ``@enabled``, which the bypass verb leaves
+        untouched, so we read the block level directly here.)"""
+        state: dict[tuple[int, int], bool] = {}
+        flow = (body.get("preset") or {}).get("flow") or []
+        for path_dict in flow:
+            if not isinstance(path_dict, dict):
+                continue
+            for key, raw_block in path_dict.items():
+                if not (isinstance(key, str) and key.startswith("b") and key[1:].isdigit()):
+                    continue
+                if not isinstance(raw_block, dict) or "@enabled" not in raw_block:
+                    continue
+                lane = int(raw_block.get("path", 0) or 0)
+                pos = int(raw_block.get("position", 0) or 0)
+                enabled = cls._unwrap(raw_block["@enabled"])
+                state[(lane, pos)] = bool(enabled)
+        return state
+
+    @staticmethod
+    def _read_input_source(body: dict) -> str | None:
+        """The head-node instrument source (``inst1``/``inst2``/``both``/``none``)
+        from the lane-0 ``b00`` input model. ``None`` when not determinable."""
+        from helixgen import controllers
+
+        device_id = (body.get("meta") or {}).get("device_id") or "stadium_xl"
+        flow = (body.get("preset") or {}).get("flow") or []
+        for path_dict in flow:
+            if not isinstance(path_dict, dict):
+                continue
+            b00 = path_dict.get("b00")
+            if not (isinstance(b00, dict) and b00.get("slot")):
+                continue
+            model = b00["slot"][0].get("model", "")
+            return controllers.input_mode_for_model(device_id, model)
+        return None
+
+    @staticmethod
     def _display_name(lib, model: str) -> str:
         if lib is None:
             return model
@@ -107,6 +187,7 @@ class RealEditor:
         body = hsp.read_hsp(path)
         raw_blocks = hsp.extract_blocks_from_hsp(body)
         lib = self._load_library()
+        bypass = self._bypass_state(body)
 
         # Group blocks by lane (@path), preserving chain order within each lane.
         by_path: dict[int, list[BlockVM]] = {}
@@ -114,7 +195,9 @@ class RealEditor:
             model = str(raw.get("@model", ""))
             lane = int(raw.get("@path", 0) or 0)
             position = int(raw.get("@position", 0) or 0)
-            enabled = bool(raw.get("@enabled", True))
+            # Prefer the bNN-level bypass state (what the device + the bypass verb
+            # use); fall back to the slot-level flag extract surfaces.
+            enabled = bypass.get((lane, position), bool(raw.get("@enabled", True)))
             schema = self._schema_for(lib, model)
 
             params: list[ParamVM] = []
@@ -157,6 +240,8 @@ class RealEditor:
             description=description,
             setlists=setlists,
             paths=paths,
+            output=self._read_output(body),
+            input_source=self._read_input_source(body),
         )
 
     # -- writes ------------------------------------------------------------
@@ -202,3 +287,184 @@ class RealEditor:
 
         n = len(changes)
         return OpResult(ok=True, message=f"saved {n} change{'s' if n != 1 else ''}")
+
+    def set_output(self, tone_id: str, level: float, pan: float) -> OpResult:
+        """Write the main-out endpoint's level (dB) and pan to the library
+        ``.hsp``. Pan is clamped to ``[0, 1]`` (mirroring the param-clamp
+        discipline; ``mutate.set_flow_param`` does not clamp). Atomic: builds the
+        body in memory and only writes on full success, so disk stays consistent
+        on any failure."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        pan = max(0.0, min(1.0, float(pan)))
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        try:
+            mutate.set_flow_param(body, "output", "level", float(level))
+            mutate.set_flow_param(body, "output", "pan", pan)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not set output: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="saved output")
+
+    def set_bypass(self, tone_id: str, block: BlockVM, enabled: bool) -> OpResult:
+        """Toggle one block's bypass/enable state in the library ``.hsp``,
+        addressing it by the same ``(model, lane=@path, pos=@position)``
+        coordinates ``save_params`` uses. An ambiguous target (same model at the
+        same lane+pos across two DSP flows) raises ``MutateError``, surfaced as a
+        failed op with no write — never a wrong-slot toggle. Atomic: builds the
+        body in memory and only writes on full success."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.set_enabled(
+                body,
+                block.model,
+                enabled,
+                lib,
+                lane=block.path,
+                pos=block.position,
+            )
+        except Exception as exc:  # noqa: BLE001 — incl. the ambiguous-target refusal
+            verb = "enable" if enabled else "bypass"
+            return OpResult(ok=False, message=f"could not {verb} {block.model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="enabled block" if enabled else "bypassed block")
+
+    # -- structural edits (serial paths only; parallel refuses) ------------
+
+    def list_block_catalog(self) -> tuple[BlockCatalogVM, ...]:
+        """The library's block models grouped by category, for the add/swap
+        picker. Empty tuple when the library can't be read."""
+        lib = self._load_library()
+        if lib is None:
+            return ()
+        try:
+            blocks = lib.list_blocks()
+        except Exception:  # noqa: BLE001
+            return ()
+        by_cat: dict[str, list[tuple[str, str]]] = {}
+        for block in blocks:
+            model_id = getattr(block, "model_id", "") or ""
+            if not model_id:
+                continue
+            category = getattr(block, "category", "") or ""
+            display = getattr(block, "display_name", None) or model_id
+            by_cat.setdefault(category, []).append((model_id, display))
+        return tuple(
+            BlockCatalogVM(category=cat, models=tuple(models))
+            for cat, models in sorted(by_cat.items())
+        )
+
+    def add_block(self, tone_id: str, after: BlockVM | None, model: str) -> OpResult:
+        """Insert ``model`` into the (serial, lane-0) chain, after ``after`` when
+        given, else at the end. Refuses on a parallel-routed path (``MutateError``)
+        with no write. Atomic: builds the body in memory, writes only on success."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.add_block(body, model, lib, after=after.model if after else None)
+        except Exception as exc:  # noqa: BLE001 — incl. the parallel-path refusal
+            return OpResult(ok=False, message=f"could not add {model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="added block")
+
+    def remove_block(self, tone_id: str, block: BlockVM) -> OpResult:
+        """Delete ``block`` from the (serial) chain, addressing it by the same
+        ``(model, lane=@path, pos=@position)`` coordinates ``save_params`` uses.
+        Refuses on a parallel-routed path or an ambiguous target (``MutateError``)
+        with no write. Atomic."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.remove_block(body, block.model, lib, lane=block.path, pos=block.position)
+        except Exception as exc:  # noqa: BLE001 — incl. the parallel-path refusal
+            return OpResult(ok=False, message=f"could not remove {block.model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="removed block")
+
+    def swap_model(self, tone_id: str, block: BlockVM, model: str) -> OpResult:
+        """Replace ``block``'s model with ``model`` (same category), in place,
+        addressed by ``(model, lane=@path, pos=@position)``. A category mismatch
+        or ambiguous target (``MutateError``) fails soft with no write. Atomic."""
+        path = self._hsp_path(tone_id)
+        if not path:
+            return OpResult(ok=False, message=f"{tone_id!r} has no library .hsp to edit")
+
+        from helixgen import hsp, mutate
+
+        try:
+            body = hsp.read_hsp(path)
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer
+            return OpResult(ok=False, message=f"could not read tone: {exc}")
+
+        lib = self._load_library()
+        try:
+            mutate.swap_model(body, block.model, model, lib, lane=block.path, pos=block.position)
+        except Exception as exc:  # noqa: BLE001 — incl. the category-mismatch refusal
+            return OpResult(ok=False, message=f"could not swap {block.model}: {exc}")
+
+        try:
+            hsp.write_hsp(path, body)
+        except Exception as exc:  # noqa: BLE001
+            return OpResult(ok=False, message=f"could not write tone: {exc}")
+
+        return OpResult(ok=True, message="swapped block")
