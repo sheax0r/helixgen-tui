@@ -21,6 +21,7 @@ from helixgen_tui.core.device import DeviceService
 from helixgen_tui.core.models import DeviceStateVM, OpResult
 from helixgen_tui.core.ports import Core
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.irs import IrsScreen
 from helixgen_tui.screens.library import LibraryScreen
 from helixgen_tui.screens.setlists import SetlistsScreen
 from helixgen_tui.widgets.help_overlay import HelpOverlay
@@ -73,14 +74,6 @@ def format_device_text(vm: DeviceStateVM) -> str:
     return text
 
 
-class IrsScreen(LibrarianScreen):
-    """Placeholder IRs-mode screen (real content lands in a later task)."""
-
-    TAB_LABEL = "IRs"
-    MODE_NAME = "irs"
-
-    def body(self) -> ComposeResult:
-        yield Static("IRs")
 
 
 class DeviceScreen(LibrarianScreen):
