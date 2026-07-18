@@ -328,6 +328,48 @@ async def test_manual_entry_with_bracket_param_name_does_not_crash():
         assert dict(_params_cells(app))["Gain [/]"] == "0.50"
 
 
+async def test_long_description_does_not_crowd_out_the_tables():
+    """A tone with a long multi-paragraph description must not let the header
+    eat the viewport: the header stays bounded and the block/param tables keep
+    real height. Regression for the header rendering the whole description raw
+    (height: auto) and collapsing the tables to ~0."""
+    marker = "ZZUNIQUELATERPARAGRAPHMARKERZZ"
+    paragraphs = [f"Paragraph {i}: " + "lorem ipsum dolor sit " * 4 for i in range(70)]
+    paragraphs[64] += " " + marker  # marker lives in a later paragraph
+    long_desc = "\n".join(paragraphs)
+    assert len(long_desc) > 2000
+    assert long_desc.count("\n") > 60
+
+    import dataclasses
+
+    chain = dataclasses.replace(_chain(), description=long_desc)
+    app = _app(chain)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        assert isinstance(app.screen, ToneEditorScreen)
+
+        header = app.screen.query_one("#editor-header", Static)
+        blocks = app.screen.query_one("#editor-blocks", DataTable)
+        params = app.screen.query_one("#editor-params", DataTable)
+
+        # Header is bounded — it must not expand to render the whole description.
+        assert header.outer_size.height <= 6
+
+        # The tables keep real height instead of collapsing to ~0 below the fold.
+        assert blocks.outer_size.height >= 5
+        assert params.outer_size.height >= 5
+
+        # And the data is actually there.
+        assert any("Scream 808" in row[1] for row in _blocks_cells(app))
+        assert "Drive" in [n for n, _ in _params_cells(app)]
+
+        # The description is compacted to a single line: the later-paragraph
+        # marker is dropped and the header carries only its 3 structural lines.
+        rendered = str(header.render())
+        assert marker not in rendered
+        assert rendered.count("\n") <= 3
+
+
 async def test_float_edit_back_to_display_value_clears_dirty_for_non_2dp_disk_value():
     """An on-disk float not aligned to 2dp (0.333 -> shows 0.33) must still
     prune cleanly: nudge up then down lands on 0.33 and dirty clears, so a

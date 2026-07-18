@@ -37,6 +37,20 @@ _ENTRY_ID = "editor-entry"
 
 _FLOAT_STEP = 0.01
 
+_DESC_MAX = 100
+
+
+def _compact(text: str) -> str:
+    """Collapse all whitespace/newlines to single spaces and truncate.
+
+    A tone description can be many paragraphs; the header renders it on one
+    line, so we flatten it and cap the length (with an ellipsis) rather than
+    let it expand the fixed-height header and crowd out the tables."""
+    flat = " ".join(text.split())
+    if len(flat) > _DESC_MAX:
+        return flat[: _DESC_MAX - 1].rstrip() + "…"
+    return flat
+
 
 def _fmt_value(value: object) -> str:
     """Render a param value for a table cell: floats to 2dp, bools as on/off."""
@@ -77,7 +91,7 @@ class ToneEditorScreen(Screen):
 
     DEFAULT_CSS = f"""
     ToneEditorScreen #{_HEADER_ID} {{
-        height: auto;
+        height: 4;
         padding: 0 1;
         background: $panel;
         color: $text;
@@ -223,7 +237,7 @@ class ToneEditorScreen(Screen):
         lines = [
             f"{c.name}{dirty}",
             f"Guitar: {c.guitar or '-'}   Setlists: {setlists}",
-            f"Description: {c.description or '-'}",
+            f"Description: {_compact(c.description) if c.description else '-'}",
         ]
         header.update("\n".join(lines))
 

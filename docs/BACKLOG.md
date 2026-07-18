@@ -153,6 +153,20 @@ blocks only**. Structural chain editing is out of scope for v1 and deferred here
   editor can address and write every slot; until then the editor is honest about
   the failure rather than corrupting the file.
 
+## 15. Tone-editor header cosmetic clipping (adversarial-review, 2026-07-18)
+
+The v0.2.1 header-overflow fix pins `#editor-header` to a fixed `height: 4`
+(hard clip in Textual, verified: a 90-char name + 300-char description still
+holds the box to 4 rows and never eats the tables — the actual bug can't
+recur). Remaining, purely cosmetic: within that 4-row box, an unusually long
+tone **name** (name + `   * unsaved` past the terminal width) wraps and can
+push the `Description:` line out of view, and a 100-char compacted description
+plus its `Description: ` prefix wraps to two rows on a narrow (~80-col)
+terminal. Nothing is lost destructively and no other pane is affected. If it
+ever bothers a user: budget the header by terminal width (truncate name too,
+size `_DESC_MAX` off the available columns) instead of a flat 100. Low
+priority — no functional impact.
+
 ## 14. Param-schema enrichment dependency on core (from tone param editor v1)
 
 The editor reads per-param **type** and **default** from `library.Library`'s
