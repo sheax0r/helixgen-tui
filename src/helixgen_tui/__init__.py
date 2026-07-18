@@ -6,4 +6,4 @@ confirmation. See the design spec and implementation plan under
 docs/superpowers/ for the full architecture.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"

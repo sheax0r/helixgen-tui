@@ -93,3 +93,34 @@ of matches, and enter-to-act on the top hit.
 - The footer also exposes Textual's command palette (^p: theme, screenshot,
   …). Decide whether that's intended product surface or should be disabled
   (`ENABLE_COMMAND_PALETTE = False`).
+
+## 12. Console-markup bug class beyond the detail modal (from PR review, 2026-07-18)
+
+The tiny-empty-box fix (PR: `ToneDetailModal` → `markup=False`, shipped
+v0.1.3) closed one instance of a repo-wide bug: any Textual surface that
+renders tone/device-derived free text with markup parsing on will strip
+bracket-bearing text (`[reverb]`, `[b]…[/b]`, `[text](url)`) and **crash the
+whole screen** on a malformed tag (a tone named `Bad [/] name` raises
+`MarkupError`). Confirmed instances still open:
+- **DataTable cells (highest severity, highest traffic).** `library.py`,
+  `setlists.py`, `irs.py`, and the `AddToneModal` picker pass plain-string
+  cells; Textual's `default_cell_formatter` runs `Text.from_markup` on each.
+  A bracketed tone name renders corrupted in the library table *before* the
+  detail modal is reachable, and a `[/]`-bearing name crashes the screen on
+  load. `markup=False` does not apply to DataTable — pass `rich.text.Text`
+  cell objects (a `Text` bypasses the markup parse).
+- **`ConfirmModal` (`widgets/confirm_modal.py`).** `Static(body)` is
+  markup-parsed and `body` includes `plan.lines` built from
+  `f"{tone.name} …"`, so a bracketed tone name is stripped / a `[/]` name
+  crashes the confirm dialog. Also its hardcoded `"[y] confirm  [n] cancel"`
+  footer is silently stripped to `" confirm   cancel"` today — the key hints
+  are invisible in the shipped product. Fix: `markup=False` + restyle/escape
+  the footer.
+- **`DeviceScreen` info/locks Statics (`device.py`).** `_apply_info` writes
+  `f"Active tone: {state.active_tone}"` and `_apply_locks` writes free-text
+  lock labels (`--label "<who>"`) into default-markup Statics — same class,
+  lower traffic.
+
+Do a single sweep converting user/device-derived text surfaces (Text cells
+for tables, `markup=False` for Statics) with a regression test per surface
+using a `[/]`- and `[reverb]`-bearing fixture.

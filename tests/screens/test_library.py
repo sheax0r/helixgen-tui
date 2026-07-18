@@ -89,6 +89,40 @@ async def test_enter_opens_detail_modal_with_setlists():
         assert "AC/DC - Back in Black" in modal_text
 
 
+async def test_detail_modal_renders_bracketed_text_literally():
+    """Regression: tone text containing square brackets must render verbatim.
+
+    Real tone names/descriptions carry brackets - markdown-style links
+    ``[text](url)``, inline markers like ``[reverb]``/``[b]``, lone ``[``.
+    Textual's ``Static`` parses its content as console markup by default, so a
+    bracket that looks like a tag is silently stripped (or, for a malformed
+    tag, blows up the whole render - the "tiny empty bordered box" bug). The
+    modal Static must disable markup so the text shows literally.
+    """
+    from helixgen_tui.screens.library import ToneDetailModal
+
+    bracketed = [
+        ToneVM(
+            name="Solo [Live]",
+            tone_id="tone-b",
+            guitar="SG",
+            description="Boost [reverb] then [b]bright[/b] via [link](http://x)",
+            sync=SyncState.SYNCED,
+            setlists=("Gig 1",),
+        )
+    ]
+    app = HelixgenTuiApp(_core(tones=bracketed))
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        assert isinstance(app.screen, ToneDetailModal)
+        modal_text = "\n".join(str(w.render()) for w in app.screen.query("Static"))
+        # Each bracketed fragment must survive verbatim in the rendered output.
+        assert "Solo [Live]" in modal_text
+        assert "[reverb]" in modal_text
+        assert "[b]bright[/b]" in modal_text
+        assert "[link](http://x)" in modal_text
+
+
 async def test_escape_closes_detail_modal():
     from helixgen_tui.screens.library import ToneDetailModal
 

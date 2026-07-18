@@ -80,7 +80,12 @@ class ToneDetailModal(ModalScreen[None]):
             f"Description: {tone.description or '—'}",
         ]
         with Container():
-            yield Static("\n".join(lines))
+            # markup=False: tone names/descriptions carry literal square
+            # brackets (``[reverb]``, ``[text](url)``, a lone ``[``) that
+            # Textual's Static would otherwise parse as console-markup tags -
+            # stripping the text or, on a malformed tag, blanking the whole
+            # body (the empty-bordered-box bug). Render the text verbatim.
+            yield Static("\n".join(lines), markup=False)
 
     def action_dismiss_detail(self) -> None:
         self.dismiss()
