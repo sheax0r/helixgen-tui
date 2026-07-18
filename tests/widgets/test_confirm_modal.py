@@ -17,10 +17,14 @@ from helixgen_tui.widgets.confirm_modal import ConfirmModal
 class _ModalApp(App[bool]):
     def __init__(self, plan: MutationPlan) -> None:
         self._plan = plan
+        self.result: bool | None = None
         super().__init__()
 
     def on_mount(self) -> None:
-        self.push_screen(ConfirmModal(self._plan))
+        self.push_screen(ConfirmModal(self._plan), self._store_result)
+
+    def _store_result(self, value: bool) -> None:
+        self.result = value
 
 
 async def test_bracketed_plan_renders_literally_and_keeps_footer():
@@ -45,5 +49,10 @@ async def test_bracketed_plan_confirm_still_dismisses_true():
     async with app.run_test() as pilot:
         await pilot.pause()
         assert isinstance(app.screen, ConfirmModal)
+        # Render the bracketed body so the markup parser runs (would crash
+        # pre-fix), then confirm the dismissal actually returns True.
+        "".join(str(w.render()) for w in app.screen.query("Static"))
         await pilot.press("y")
         await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal)
+        assert app.result is True

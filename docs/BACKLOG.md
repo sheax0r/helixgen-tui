@@ -94,7 +94,13 @@ of matches, and enter-to-act on the top hit.
   …). Decide whether that's intended product surface or should be disabled
   (`ENABLE_COMMAND_PALETTE = False`).
 
-## 12. Console-markup bug class beyond the detail modal (from PR review, 2026-07-18)
+## 12. Console-markup bug class beyond the detail modal (from PR review, 2026-07-18) — RESOLVED
+
+Swept in plan `docs/plans/2026-07-18-12-markup-safety.md` (branch
+`12-markup-safety`): DataTable cells wrapped in `rich.text.Text` (library,
+setlists incl. AddToneModal, irs local+device), `ConfirmModal` and
+`DeviceScreen` info/locks Statics set `markup=False`. Regression test per
+surface with `[/]`/`[reverb]` fixtures. Original entry below for history.
 
 The tiny-empty-box fix (PR: `ToneDetailModal` → `markup=False`, shipped
 v0.1.3) closed one instance of a repo-wide bug: any Textual surface that
