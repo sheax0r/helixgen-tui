@@ -1,6 +1,6 @@
 [project]
 name = "helixgen-tui"
-version = "0.1.1"
+version = "0.1.2"
 description = "Terminal UI for helixgen: tone library, setlists, and Line 6 Helix Stadium device control."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.screen import Screen
+from textual.widgets import Footer
 
 from helixgen_tui.core.models import OpResult
 from helixgen_tui.widgets.status_footer import StatusFooter
@@ -23,10 +25,25 @@ class LibrarianScreen(Screen):
     TAB_LABEL: str = ""
     MODE_NAME: str = ""
 
+    DEFAULT_CSS = """
+    LibrarianScreen #bottom-bars {
+        dock: bottom;
+        height: 2;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         yield TabStrip(tabs=self.app.MODE_TABS, active_mode=self.MODE_NAME)
         yield from self.body()
-        yield StatusFooter()
+        # Both bottom bars share one docked container: docking them to the
+        # screen edge individually would stack them on the same row (the
+        # bindings footer painted over the status bar). Status above, keys at
+        # the very bottom edge.
+        with Vertical(id="bottom-bars"):
+            yield StatusFooter()
+            # Textual's bindings footer: shows this screen's keys and triggers
+            # them on click — the visible/mouse counterpart to the ? overlay.
+            yield Footer()
 
     def body(self) -> ComposeResult:
         """Compose hook: subclasses yield the screen's main content here."""

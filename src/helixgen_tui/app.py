@@ -91,10 +91,12 @@ class HelixgenTuiApp(App):
     DEFAULT_MODE = "library"
 
     BINDINGS = [
-        Binding("1", "switch_mode('library')", "Library"),
-        Binding("2", "switch_mode('setlists')", "Setlists"),
-        Binding("3", "switch_mode('irs')", "IRs"),
-        Binding("4", "switch_mode('device')", "Device"),
+        # Tab keys are hidden from the bindings footer — the TabStrip already
+        # shows them on every screen.
+        Binding("1", "switch_mode('library')", "Library", show=False),
+        Binding("2", "switch_mode('setlists')", "Setlists", show=False),
+        Binding("3", "switch_mode('irs')", "IRs", show=False),
+        Binding("4", "switch_mode('device')", "Device", show=False),
         Binding("question_mark", "show_help", "Help", key_display="?"),
         Binding("q", "quit", "Quit"),
     ]
