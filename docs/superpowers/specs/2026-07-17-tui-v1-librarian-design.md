@@ -247,8 +247,42 @@ This design adds:
 
 Each step lands as its own PR with adversarial review per repo rules.
 
+## First post-v1 screen: the tone designer (Claude chat)
+
+Named here (backlog #4) so the shell's first extension is designed against
+real requirements, but explicitly **not v1 scope**.
+
+A fifth tab hosting a conversation with locally-installed Claude Code: the
+user describes the tone they want ("warm jazz clean, ES-335", "the Everlong
+chorus sound") and Claude designs it and writes it into the library using the
+existing helixgen plugin skills (`/tone`, `/setup`) — the TUI contributes no
+tone logic, preserving the engine/skill boundary.
+
+Requirements settled now:
+
+- **Reuse the user's existing Claude Code auth.** Two viable bindings, both
+  verified against current docs: the Claude Agent SDK for Python
+  (`claude-agent-sdk` — native async, structured messages, `can_use_tool`
+  permission callback) or headless CLI (`claude -p --output-format
+  stream-json --include-partial-messages`, which rides `claude login`).
+  Auth reuse is the requirement; the implementation picks the binding that
+  satisfies it at build time (SDK auth expectations are version-dependent).
+- **Permissions render as D4 modals.** When Claude wants to run a tool, the
+  TUI intercepts (SDK `can_use_tool`, or pre-allowed `Bash(helixgen *)` on
+  the CLI path) and shows the same confirm-modal language as every other
+  mutation. Routine library authoring can be pre-allowed; device writes keep
+  their tiers.
+- **Graceful degradation, same as offline-first:** detect via
+  `shutil.which("claude")` + version check; when absent, the tab is hidden
+  or shows an install hint. Claude Code is an optional runtime dependency,
+  exactly like the device.
+- **Library refresh on completion:** the Library screen's re-read-on-entry
+  already picks up new tones; the chat screen additionally signals a
+  refresh when a session that wrote to the library ends.
+
 ## Out of scope for v1
 
+- The tone-designer chat screen above (first post-v1 screen, backlog #4).
 - Signal-flow editor, global settings, tuner/meters screens (the shell is
   ready for them; they come later).
 - Live smoke test suite (deferred; D6).

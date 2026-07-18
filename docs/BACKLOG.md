@@ -19,3 +19,10 @@ before any code.
   binds the Python API directly (design D5); today only the CLI is core's
   documented contract. File the core-side entry when implementation starts
   and the real import list is known.
+- **#4 Tone-designer chat screen (first post-v1 screen)** — user-requested
+  2026-07-17: if Claude Code is installed locally, a fifth tab hosts a
+  conversation where the user describes a tone and Claude authors it into
+  the library via the helixgen plugin skills. Requirements (auth reuse,
+  D4-modal permission bridging, graceful degradation, library refresh) are
+  settled in the v1 design spec's "first post-v1 screen" section; binding
+  choice (Agent SDK vs headless CLI) deferred to build time.
