@@ -12,14 +12,13 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container
 from textual.coordinate import Coordinate
 from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input
 
 from helixgen_tui.core.models import MutationPlan, OpResult, SyncState, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.tone_editor import ToneEditorScreen
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _SYNC_GLYPH = {
@@ -45,50 +44,6 @@ class ActivateToneRequested(Message):
     def __init__(self, tone_id: str) -> None:
         self.tone_id = tone_id
         super().__init__()
-
-
-class ToneDetailModal(ModalScreen[None]):
-    """Modal showing a single tone's name, guitar, setlists, and description."""
-
-    DEFAULT_CSS = """
-    ToneDetailModal {
-        align: center middle;
-    }
-
-    ToneDetailModal > Container {
-        width: auto;
-        height: auto;
-        padding: 1 2;
-        border: round $primary;
-        background: $panel;
-    }
-    """
-
-    BINDINGS = [Binding("escape", "dismiss_detail", "Close", show=False)]
-
-    def __init__(self, tone: ToneVM) -> None:
-        self._tone = tone
-        super().__init__()
-
-    def compose(self) -> ComposeResult:
-        tone = self._tone
-        setlists = ", ".join(tone.setlists) if tone.setlists else "—"
-        lines = [
-            f"Name: {tone.name}",
-            f"Guitar: {tone.guitar or '—'}",
-            f"Setlists: {setlists}",
-            f"Description: {tone.description or '—'}",
-        ]
-        with Container():
-            # markup=False: tone names/descriptions carry literal square
-            # brackets (``[reverb]``, ``[text](url)``, a lone ``[``) that
-            # Textual's Static would otherwise parse as console-markup tags -
-            # stripping the text or, on a malformed tag, blanking the whole
-            # body (the empty-bordered-box bug). Render the text verbatim.
-            yield Static("\n".join(lines), markup=False)
-
-    def action_dismiss_detail(self) -> None:
-        self.dismiss()
 
 
 class LibraryScreen(LibrarianScreen):
@@ -160,9 +115,14 @@ class LibraryScreen(LibrarianScreen):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         tone_id = event.row_key.value
-        tone = self.app.core.library.get_tone(tone_id)
-        if tone is not None:
-            self.app.push_screen(ToneDetailModal(tone))
+        # Enter drills into the param editor for this tone. get_chain returns
+        # None for a tone with no editable .hsp (device-origin) — skip then.
+        if self.app.core.editor.get_chain(tone_id) is None:
+            self.app.report_op(
+                OpResult(ok=False, message=f"{tone_id!r} has no editable chain")
+            )
+            return
+        self.app.push_screen(ToneEditorScreen(tone_id))
 
     # -- device actions ----------------------------------------------------
 

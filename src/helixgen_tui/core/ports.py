@@ -10,7 +10,16 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan, OpResult, SetlistVM, ToneVM
+from helixgen_tui.core.models import (
+    ChainVM,
+    DeviceStateVM,
+    IrVM,
+    MutationPlan,
+    OpResult,
+    ParamChange,
+    SetlistVM,
+    ToneVM,
+)
 
 
 @runtime_checkable
@@ -76,6 +85,21 @@ class DevicePort(Protocol):
     def lock_status(self) -> list[str]: ...
 
 
+@runtime_checkable
+class EditorPort(Protocol):
+    """Read a tone's editable signal chain, and write back changed params.
+
+    ``get_chain`` returns the whole chain as view models (or ``None`` when the
+    tone has no ``.hsp`` on disk — e.g. a device-origin tone); ``save_params``
+    applies a batch of ``ParamChange`` edits to the library ``.hsp`` and returns
+    an ``OpResult``. Neither touches the device.
+    """
+
+    def get_chain(self, tone_id: str) -> ChainVM | None: ...
+
+    def save_params(self, tone_id: str, changes: list[ParamChange]) -> OpResult: ...
+
+
 class DeviceUnreachable(Exception):
     """Raised by DevicePort methods when the device can't be reached."""
 
@@ -85,5 +109,6 @@ class Core(Protocol):
     library: LibraryPort
     setlists: SetlistPort
     device: DevicePort
+    editor: EditorPort
 
     def list_local_irs(self) -> list[IrVM]: ...

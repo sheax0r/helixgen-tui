@@ -76,62 +76,61 @@ async def test_no_slot_addresses_rendered():
         assert re.search(r"\b[1-8][A-D]\b", rendered) is None
 
 
-async def test_enter_opens_detail_modal_with_setlists():
-    from helixgen_tui.screens.library import ToneDetailModal
+def _chain(tone_id="tone-1"):
+    from helixgen_tui.core.models import BlockVM, ChainVM, ParamVM, PathVM
 
-    app = HelixgenTuiApp(_core())
+    return ChainVM(
+        tone_id=tone_id,
+        name="AC/DC - Back in Black",
+        guitar="SG",
+        description="Crunchy rhythm",
+        setlists=("Gig 1", "Gig 2"),
+        paths=(
+            PathVM(
+                path=0,
+                blocks=(
+                    BlockVM(
+                        model="HD2_DrvScream808",
+                        display="Scream 808",
+                        position=1,
+                        path=0,
+                        enabled=True,
+                        params=(ParamVM(name="Drive", value=0.1, type="float", default=0.5),),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+async def test_enter_opens_tone_editor_with_metadata():
+    from helixgen_tui.screens.tone_editor import ToneEditorScreen
+
+    core = FakeCore(
+        tones=list(_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        chains={"tone-1": _chain()},
+    )
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # cursor on row 0 = AC/DC (tone-1)
+        assert isinstance(app.screen, ToneEditorScreen)
+        from textual.widgets import Static
+
+        header = str(app.screen.query_one("#editor-header", Static).render())
+        # metadata folded into the editor header (nothing lost from the old modal)
+        assert "AC/DC - Back in Black" in header
+        assert "Gig 1" in header and "Gig 2" in header
+
+
+async def test_enter_on_tone_without_chain_stays_on_library():
+    """A tone with no editable .hsp (get_chain -> None) must not open the editor;
+    the Library screen reports it and stays put."""
+    app = HelixgenTuiApp(_core())  # FakeCore has no chains configured
     async with app.run_test() as pilot:
         await pilot.press("enter")
-        assert isinstance(app.screen, ToneDetailModal)
-        modal_text = "\n".join(str(w.render()) for w in app.screen.query("Static"))
-        assert "Gig 1" in modal_text
-        assert "Gig 2" in modal_text
-        assert "AC/DC - Back in Black" in modal_text
-
-
-async def test_detail_modal_renders_bracketed_text_literally():
-    """Regression: tone text containing square brackets must render verbatim.
-
-    Real tone names/descriptions carry brackets - markdown-style links
-    ``[text](url)``, inline markers like ``[reverb]``/``[b]``, lone ``[``.
-    Textual's ``Static`` parses its content as console markup by default, so a
-    bracket that looks like a tag is silently stripped (or, for a malformed
-    tag, blows up the whole render - the "tiny empty bordered box" bug). The
-    modal Static must disable markup so the text shows literally.
-    """
-    from helixgen_tui.screens.library import ToneDetailModal
-
-    bracketed = [
-        ToneVM(
-            name="Solo [Live]",
-            tone_id="tone-b",
-            guitar="SG",
-            description="Boost [reverb] then [b]bright[/b] via [link](http://x)",
-            sync=SyncState.SYNCED,
-            setlists=("Gig 1",),
-        )
-    ]
-    app = HelixgenTuiApp(_core(tones=bracketed))
-    async with app.run_test() as pilot:
-        await pilot.press("enter")
-        assert isinstance(app.screen, ToneDetailModal)
-        modal_text = "\n".join(str(w.render()) for w in app.screen.query("Static"))
-        # Each bracketed fragment must survive verbatim in the rendered output.
-        assert "Solo [Live]" in modal_text
-        assert "[reverb]" in modal_text
-        assert "[b]bright[/b]" in modal_text
-        assert "[link](http://x)" in modal_text
-
-
-async def test_escape_closes_detail_modal():
-    from helixgen_tui.screens.library import ToneDetailModal
-
-    app = HelixgenTuiApp(_core())
-    async with app.run_test() as pilot:
-        await pilot.press("enter")
-        assert isinstance(app.screen, ToneDetailModal)
-        await pilot.press("escape")
-        assert not isinstance(app.screen, ToneDetailModal)
+        assert isinstance(app.screen, LibraryScreen)
+        assert "no editable chain" in app.last_action.lower()
 
 
 async def test_filter_narrows_rows_by_substring():
