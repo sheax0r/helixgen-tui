@@ -51,3 +51,10 @@ before any code.
     pool garbage-collect toggle is exposed on the CLI only.
   - **Tab-cycling** — modes are reached by their number keys (`1`–`4`); there's
     no `tab`/`shift+tab` cycle between them.
+
+- **#8 Cosmetic minors from the final review (2026-07-17)** — (a) modal
+  dismissal fires `ScreenResume`, rebuilding tables and resetting DataTable
+  cursors to row 0 (flows unaffected; selection captured pre-modal);
+  (b) device screen `r` retry needs a second press after reconnect under the
+  production spawn (probe async, info refresh immediate); (c) format_device_text
+  substring heuristic is fragile; (d) library filter matches name only.
