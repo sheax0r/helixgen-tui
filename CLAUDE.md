@@ -29,3 +29,7 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 - **Backlog discipline.** `docs/BACKLOG.md` = this repo's single backlog.
 - TDD throughout: failing test first, then minimal implementation.
 - **Never commit paid IR packs or personal device exports** (user rule from core; applies here if fixtures ever creep in).
+
+## ralphex
+
+Implementation tasks driven from the helix coordination workspace run via [ralphex](https://github.com/umputun/ralphex) plan files in `docs/plans/` (scaffold: `docs/plans/TEMPLATE.md`); completed plans move to `docs/plans/completed/`. The launcher syncs local `main` from `github/main` before each run. Review = ralphex's built-in pipeline (`external_review_tool = none` in `.ralphex/config`) — the adversarial-review step above still applies before merge. `default_branch = main` is pinned in `.ralphex/config` because the remote is named `github` (not `origin`), so ralphex can't auto-detect the default branch from `origin/HEAD`. `.ralphex/config` is tracked; the `.ralphex/worktrees/` and `.ralphex/progress/` runtime dirs are gitignored.
