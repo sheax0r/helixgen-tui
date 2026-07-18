@@ -75,12 +75,12 @@ NOT MODEL DATA (out of scope — no interpolated model strings):
 
 ### Task 3: Static / update / border_title surfaces
 
-- [ ] Failing tests: ConfirmModal from a bracketed name doesn't crash and shows
+- [x] Failing tests: ConfirmModal from a bracketed name doesn't crash and shows
       body + the `[y]/[n]` footer LITERALLY; DeviceScreen `#info`/`#locks` with
       bracketed active-tone name / lock label don't crash; any tone_editor
       static/header/border_title with a bracketed block or param name renders
       literally without crash.
-- [ ] Apply `markup=False` (or `Text`, or `escape()` for border_title) to every
+- [x] Apply `markup=False` (or `Text`, or `escape()` for border_title) to every
       surface from Task 1 not already safe. Confirm no intended styling is lost.
 
 ### Task 4: confirm complete

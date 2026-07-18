@@ -178,6 +178,44 @@ async def test_retry_reconnects_and_refreshes_info():
         assert "AC/DC - Back in Black" in info_text
 
 
+# --- markup safety (#12): bracket-bearing device strings render literally ---
+
+
+async def test_bracketed_active_tone_renders_literally_without_crashing():
+    """A device active-tone name carrying markup brackets must render verbatim
+    in the info panel, never be stripped or raise MarkupError (which would
+    crash the screen)."""
+    state = DeviceStateVM(
+        status="connected",
+        model="Helix Stadium",
+        address="192.168.4.2",
+        active_tone="Weird [/] Tone",
+        detail="",
+    )
+    port = _InfoDevicePort(state=state, info={"Model [x]": "Stadium [b]"})
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("4")
+        await pilot.pause()
+        info_text = str(app.screen.query_one("#device-info").render())
+        assert "Weird [/] Tone" in info_text
+        assert "Model [x]: Stadium [b]" in info_text
+
+
+async def test_bracketed_lock_label_renders_literally_without_crashing():
+    """A lock label carrying markup brackets must render verbatim, not crash."""
+    port = _InfoDevicePort(state=_CONNECTED, locks=["locked: [reverb]", "held by [/]"])
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("4")
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        locks_text = str(app.screen.query_one("#device-locks").render())
+        assert "locked: [reverb]" in locks_text
+        assert "held by [/]" in locks_text
+
+
 # --- real thread-worker spawn: the class of bug the fix addresses ----------
 
 
