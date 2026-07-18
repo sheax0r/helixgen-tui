@@ -193,3 +193,30 @@ This is the content of existing **#3** (bless a stable core Python API surface)
 applied to param editing — cross-referenced here so the editor's schema needs
 are captured. Land the enrichment in helixgen-core first, then the editor can
 drop its hardcoded clamp and surface real ranges/enums/units.
+
+## 16. Signal-flow editor: chain navigator polish (adversarial-review, 2026-07-18)
+
+Deferred from the signal-flow-editor review. None are correctness/data bugs —
+the chain fits-on-screen case works and every write path is atomic + fail-safe.
+
+- **Cursor doesn't scroll into view on wide chains.** Task 5's "chain wider than
+  the pane scrolls horizontally" is only half-met: `#editor-chain-wrap` has
+  `overflow-x: auto`, but left/right are bound at the screen level for
+  navigation so they never reach the container's scroll actions, and nothing
+  calls `scroll_to`/`scroll_visible`. On a chain wider than the pane (8 blocks
+  with ~18-char labels can exceed 80 cols) the selected block can sit off-screen
+  with no keyboard way to reveal it. Fix: after `_render_chain`, compute the
+  selected node's column offset and `scroll_to_region`/`scroll_to` the wrap
+  container so the cursor follows. Fits-on-screen tones are unaffected.
+- **Swap picker mislabels itself and offers cross-category models.** Invoked via
+  `w`, `BlockPickerModal` still titles itself "Add block — pick a category" and
+  lists every category; picking a different category fails soft (core
+  `swap_model` refuses with `MutateError` → footer) but is confusing. Fix:
+  parameterize the modal title and, for swap, pass/pre-select only the block's
+  own category.
+- **Partial save leaves a transiently stale dirty flag.** `action_save` runs
+  `save_params` then `set_output` independently; if the first persists and the
+  second fails, `all_ok` is false so `_reload_chain` is skipped — the param
+  edits are on disk yet `self._edits` still reads dirty. Self-corrects on the
+  next (idempotent) save; no data loss. Fix: clear the portion that succeeded,
+  or reload unconditionally and re-stage only what still differs.

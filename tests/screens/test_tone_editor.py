@@ -482,6 +482,34 @@ async def test_add_block_serial_opens_picker_and_records():
         assert "DrvA" in _chain_text(app)
 
 
+async def test_add_block_to_emptied_serial_lane_appends():
+    # Removing every block from a serial lane must not be a dead-end: with no
+    # block selected, `a` appends at the end (after=None) so the lane refills.
+    editor = FakeEditorPort(chains={"tone-1": _chain()})
+    core = FakeCore(tones=list(_TONES), editor=editor)
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")  # open editor, first block selected
+        await pilot.press("x")  # remove first block
+        await pilot.pause()
+        await pilot.press("x")  # remove the remaining block -> lane empty
+        await pilot.pause()
+        await pilot.press("a")  # add with nothing selected
+        from helixgen_tui.widgets.block_picker_modal import BlockPickerModal
+
+        assert isinstance(app.screen, BlockPickerModal)  # not a no-op
+        await pilot.press("enter")  # pick first category
+        await pilot.press("enter")  # pick first model
+        await pilot.pause()
+        adds = [c for c in editor.calls if c[0] == "add_block"]
+        assert len(adds) == 1
+        _, (tone_id, after_coords, model) = adds[0]
+        assert tone_id == "tone-1"
+        assert after_coords is None  # appended at end, no anchor block
+        assert model == "DrvA"
+        assert "DrvA" in _chain_text(app)
+
+
 async def test_add_block_parallel_refuses_and_records_nothing():
     editor = FakeEditorPort(
         chains={"tone-1": _parallel_chain()}, parallel_tones={"tone-1"}

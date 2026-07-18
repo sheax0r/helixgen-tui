@@ -656,6 +656,10 @@ class ToneEditorScreen(Screen):
         self._edits.clear()
         self._output_edit = None
         self._chain = self.app.core.editor.get_chain(self._tone_id)
+        # A structural write can shrink/shift the lane, leaving _col past the new
+        # end. Clamp before rendering so the chain highlight and the params pane
+        # agree on the same block (else the highlight vanishes for one frame).
+        self._selected_block()
         self._render_header()
         self._render_chain()
         self._rebuild_params_table()
@@ -663,9 +667,11 @@ class ToneEditorScreen(Screen):
     def action_add_block(self) -> None:
         if self._editing or self._chain is None:
             return
-        block = self._selected_block()
-        if block is None:
-            return  # input/output node: nothing to add after
+        # Add belongs to the block lane, not the read-only input/output nodes.
+        # Within the lane a missing selection means "append at end" (an emptied
+        # serial lane must stay refillable — never a dead-end).
+        if self._zone != "blocks":
+            return
         if self._is_parallel():
             self.app.report_op(
                 OpResult(ok=False, message="add not supported on a parallel-routed path")
