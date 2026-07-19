@@ -7,6 +7,7 @@ import re
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.models import SetlistVM, SyncState, ToneVM
 from helixgen_tui.screens.library import LibraryScreen
+from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Input
 
 from fake_core import FakeCore
@@ -433,6 +434,27 @@ async def test_screen_resume_refreshes_library():
         await pilot.pause()
         table = app.screen.query_one(DataTable)
         assert table.row_count == 4
+
+
+async def test_selection_survives_screen_resume():
+    """#8a: a non-zero cursor row must survive the on_screen_resume rebuild
+    (a modal dismiss fires ScreenResume, which rebuilds the table) — without the
+    capture-then-restore it would snap back to row 0."""
+    core = _core()
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("down")  # row 1 = Foo Fighters (tone-2)
+        assert table.cursor_row == 1
+        selected = table.coordinate_to_cell_key(Coordinate(1, 0)).row_key.value
+        await pilot.press("2")  # away to setlists
+        await pilot.pause()
+        await pilot.press("1")  # back — on_screen_resume rebuilds the table
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.cursor_row == 1
+        restored = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key.value
+        assert restored == selected
 
 
 async def test_bracketed_tone_name_renders_literally_no_crash():

@@ -169,13 +169,16 @@ class SetlistsScreen(LibrarianScreen):
 
     def _rebuild_setlist_table(self) -> None:
         table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        prev_key = self._capture_cursor_key(table)
         table.clear()
         for setlist in self._setlists:
             glyph = "✓" if setlist.sync_enabled else "○"
             table.add_row(Text(setlist.name), glyph, key=setlist.name)
+        self._restore_cursor_key(table, prev_key)
 
     def _rebuild_tones_table(self) -> None:
         table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
+        prev_key = self._capture_cursor_key(table)
         table.clear()
         setlist = self._selected_setlist()
         if setlist is None:
@@ -184,6 +187,7 @@ class SetlistsScreen(LibrarianScreen):
             tone = self.app.core.library.get_tone(tone_id)
             name = tone.name if tone is not None else tone_id
             table.add_row(Text(name), key=tone_id)
+        self._restore_cursor_key(table, prev_key)
 
     @on(DataTable.RowHighlighted, f"#{_SETLIST_TABLE_ID}")
     def _on_setlist_highlighted(self, event: DataTable.RowHighlighted) -> None:

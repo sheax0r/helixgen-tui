@@ -38,21 +38,21 @@ cosmetic noise. Fix: capture the highlighted row key before the rebuild and
 restore the cursor to that row afterward, on all three list screens. No
 product decision — the correct behavior is "keep the selection."
 
-- [ ] Write the failing pilot test(s) first: highlight a non-zero row, drive
+- [x] Write the failing pilot test(s) first: highlight a non-zero row, drive
       a modal open+dismiss (or call the screen's refresh) and assert the
       cursor is still on the same row key — one per screen:
   - Library: `tests/screens/test_library.py` (see `test_screen_resume_refreshes_library`, line ~414)
   - Setlists: `tests/screens/test_setlists.py` (see `test_screen_resume_refreshes_setlists`, line ~417)
   - IRs: `tests/screens/test_irs.py` (see `test_screen_resume_refreshes_local_pane`, line ~354)
-- [ ] Run them to confirm they fail because the cursor resets to row 0
-- [ ] Implement the minimal change — capture-then-restore the cursor row by
+- [x] Run them to confirm they fail because the cursor resets to row 0
+- [x] Implement the minimal change — capture-then-restore the cursor row by
       its row key around the `table.clear()` rebuild (fall back to row 0 when
       the previously-selected key is gone after the rebuild):
   - `src/helixgen_tui/screens/library.py` — `_rebuild_table` (line ~87), driven by `refresh_tones`/`on_screen_resume` (lines ~79, ~104)
   - `src/helixgen_tui/screens/setlists.py` — `_rebuild_setlist_table` (line ~170) and `_rebuild_tones_table` (line ~177), driven by `refresh_setlists`/`on_screen_resume` (lines ~155, ~165)
   - `src/helixgen_tui/screens/irs.py` — `refresh_local_irs` (line ~131) and `_apply_device_irs` (line ~191)
-- [ ] Run the tests and confirm they pass
-- [ ] No user-facing key/help surface changes (behavior-only polish); README
+- [x] Run the tests and confirm they pass
+- [x] No user-facing key/help surface changes (behavior-only polish); README
       and help overlay untouched
 
 ### Task 2: Library filter — substring -> subsequence fuzzy matching (#10, narrow slice)

@@ -86,6 +86,7 @@ class LibraryScreen(LibrarianScreen):
 
     def _rebuild_table(self) -> None:
         table = self.query_one(f"#{_TABLE_ID}", DataTable)
+        prev_key = self._capture_cursor_key(table)
         table.clear()
         query = self.query_one(f"#{_FILTER_ID}", Input).value.strip().lower()
         for tone in self._tones:
@@ -97,6 +98,7 @@ class LibraryScreen(LibrarianScreen):
                 _SYNC_GLYPH[tone.sync],
                 key=tone.tone_id,
             )
+        self._restore_cursor_key(table, prev_key)
 
     def action_refresh(self) -> None:
         self.refresh_tones()

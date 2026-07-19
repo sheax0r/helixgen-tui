@@ -9,6 +9,7 @@ from helixgen_tui.core.models import DeviceStateVM, OpResult, SetlistVM, SyncSta
 from helixgen_tui.screens.setlists import AddToneModal, SetlistsScreen
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
+from textual.coordinate import Coordinate
 from textual.widgets import DataTable
 
 from fake_core import FakeCore, FakeDevicePort
@@ -427,6 +428,25 @@ async def test_screen_resume_refreshes_setlists():
         await _goto_setlists(pilot)  # back — on_screen_resume re-reads
         left = app.screen.query(DataTable)[0]
         assert left.row_count == 3
+
+
+async def test_setlist_selection_survives_screen_resume():
+    """#8a: the left setlist cursor must survive the on_screen_resume rebuild —
+    without capture-then-restore it would snap back to row 0."""
+    app = _app()
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        left = app.screen.query(DataTable)[0]
+        assert left.row_count == 2
+        await pilot.press("down")  # row 1 = Gig 2
+        assert left.cursor_row == 1
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        await _goto_setlists(pilot)  # back — on_screen_resume rebuilds both panes
+        left = app.screen.query(DataTable)[0]
+        assert left.cursor_row == 1
+        key = left.coordinate_to_cell_key(Coordinate(1, 0)).row_key.value
+        assert key == "Gig 2"
 
 
 async def test_bracketed_names_render_literally_no_crash():

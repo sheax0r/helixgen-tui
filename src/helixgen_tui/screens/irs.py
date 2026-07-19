@@ -133,6 +133,7 @@ class IrsScreen(LibrarianScreen):
         worker) — local reads are cheap, matching LibraryScreen.refresh_tones."""
         self._local_irs = self.app.core.list_local_irs()
         table = self.query_one(f"#{_LOCAL_TABLE_ID}", DataTable)
+        prev_key = self._capture_cursor_key(table)
         table.clear()
         # Row keys are list indices, not names: real libraries routinely hold
         # many IRs sharing one display name (mic/distance variants), and
@@ -141,6 +142,7 @@ class IrsScreen(LibrarianScreen):
             table.add_row(
                 Text(ir.name), Text(ir.pack or ""), _short_hash(ir.irhash), key=str(index)
             )
+        self._restore_cursor_key(table, prev_key)
 
     def action_refresh(self) -> None:
         """`r`: re-read the local pane and re-query the device pane (matching
@@ -197,6 +199,7 @@ class IrsScreen(LibrarianScreen):
             table.display = False
             placeholder.display = True
             return
+        prev_key = self._capture_cursor_key(table)
         self._device_irs = list(result.value)  # type: ignore[arg-type]
         table.clear()
         for index, ir in enumerate(self._device_irs):
@@ -205,6 +208,7 @@ class IrsScreen(LibrarianScreen):
             )
         table.display = True
         placeholder.display = False
+        self._restore_cursor_key(table, prev_key)
 
     def _selected_device_ir(self) -> IrVM | None:
         table = self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable)
