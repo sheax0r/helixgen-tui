@@ -428,7 +428,7 @@ async def test_setlist_filter_does_not_break_tones_pane():
 single-column `DataTable` and confirms via `DataTable.RowSelected` →
 `dismiss(event.row_key.value)`.
 
-- [ ] Write the failing tests first in `tests/screens/test_setlists.py` (that file
+- [x] Write the failing tests first in `tests/screens/test_setlists.py` (that file
       already exercises `AddToneModal`):
 
 ```python
@@ -455,10 +455,12 @@ async def test_add_tone_modal_filter_is_focused_on_mount():
     immediately."""
 ```
 
-- [ ] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Implement:
+- [x] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Implement:
   - Add an always-visible `Input` (id `add-tone-filter`) above the modal's `DataTable`,
     focused on mount. Extend the modal's `DEFAULT_CSS` to lay it out.
+    **Shipped:** the modal's `DataTable` gained an explicit id (`add-tone-table`) so
+    the mixin can address it; existing `query_one(DataTable)` call sites still work.
   - Mix in `FilterableTableMixin` with `filter_text = lambda tone: tone.name`,
     `filter_row_key = lambda tone: tone.tone_id`, single-column
     `filter_row = lambda tone, label: (label,)`.
@@ -467,8 +469,8 @@ async def test_add_tone_modal_filter_is_focused_on_mount():
     specific row must keep working and must dismiss with *that* row, not the top hit.
   - `escape` behavior: if the filter has text, clear it; if already empty, cancel the
     modal (`dismiss(None)`) as today (L65, L86-87).
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Commit: `feat: fuzzy filter + enter-to-add in the add-tone modal (#10)`
+- [x] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Commit: `feat: fuzzy filter + enter-to-add in the add-tone modal (#10)`
 
 ### Task 5: IR panes — one filter on the focused pane, retire positional row keys
 

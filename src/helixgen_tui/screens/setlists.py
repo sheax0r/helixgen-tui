@@ -38,31 +38,42 @@ _SETLIST_TABLE_ID = "setlists-table"
 _TONES_TABLE_ID = "setlist-tones-table"
 _FILTER_ID = "setlists-filter"
 _LEFT_PANE_ID = "setlists-left-pane"
+_ADD_TONE_TABLE_ID = "add-tone-table"
+_ADD_TONE_FILTER_ID = "add-tone-filter"
 
 
-class AddToneModal(ModalScreen[str | None]):
+class AddToneModal(FilterableTableMixin, ModalScreen[str | None]):
     """Modal picker: library tones not already in the target setlist.
 
-    ``enter`` on a row dismisses with that tone's id; ``escape`` dismisses
-    with ``None``.
+    Opens with the filter focused, so the user can type straight away. ``enter``
+    in the filter dismisses with the top-ranked hit; ``enter`` (or a click) on a
+    specific row dismisses with *that* row instead. ``escape`` clears a
+    non-empty filter, and cancels the modal when the filter is already empty.
     """
 
-    DEFAULT_CSS = """
-    AddToneModal {
-        align: center middle;
-    }
+    filter_input_id = _ADD_TONE_FILTER_ID
+    filter_table_id = _ADD_TONE_TABLE_ID
 
-    AddToneModal > Container {
+    DEFAULT_CSS = f"""
+    AddToneModal {{
+        align: center middle;
+    }}
+
+    AddToneModal > Container {{
         width: 60;
         height: 16;
         padding: 1 2;
         border: round $primary;
         background: $panel;
-    }
+    }}
 
-    AddToneModal DataTable {
+    AddToneModal #{_ADD_TONE_FILTER_ID} {{
+        width: 100%;
+    }}
+
+    AddToneModal DataTable {{
         height: 1fr;
-    }
+    }}
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
@@ -74,19 +85,53 @@ class AddToneModal(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Container():
             yield Static("Add tone — enter to pick, escape to cancel")
-            yield DataTable(cursor_type="row")
+            yield Input(placeholder="filter", id=_ADD_TONE_FILTER_ID)
+            yield DataTable(id=_ADD_TONE_TABLE_ID, cursor_type="row")
 
     def on_mount(self) -> None:
-        table = self.query_one(DataTable)
-        table.add_columns("Tone")
-        for tone in self._tones:
-            table.add_row(Text(tone.name), key=tone.tone_id)
-        table.focus()
+        self.query_one(f"#{_ADD_TONE_TABLE_ID}", DataTable).add_columns("Tone")
+        self.rebuild_filtered()
+        self.query_one(f"#{_ADD_TONE_FILTER_ID}", Input).focus()
+
+    # -- FilterableTableMixin hooks ----------------------------------------
+
+    def filter_items(self) -> list[ToneVM]:
+        return self._tones
+
+    def filter_text(self, item: ToneVM) -> str:
+        return item.name
+
+    def filter_row(self, item: ToneVM, label: Text) -> tuple[object, ...]:
+        return (label,)
+
+    def filter_row_key(self, item: ToneVM) -> str:
+        return item.tone_id
+
+    def filter_on_enter(self, item: ToneVM) -> None:
+        """Enter in the filter picks the best match. Adding is the whole point
+        of this modal, so unlike the browse surfaces Enter does commit here —
+        it still only touches the local setlist, never the device."""
+        self.dismiss(item.tone_id)
+
+    @on(Input.Changed, f"#{_ADD_TONE_FILTER_ID}")
+    def _on_filter_changed(self, event: Input.Changed) -> None:
+        self.rebuild_filtered()
+
+    @on(Input.Submitted, f"#{_ADD_TONE_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self.handle_filter_submitted()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.dismiss(event.row_key.value)
 
     def action_cancel(self) -> None:
+        """Escape unwinds one step at a time: drop the query first, and only
+        cancel the modal when there is no query left to drop."""
+        filter_input = self.query_one(f"#{_ADD_TONE_FILTER_ID}", Input)
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> rebuild
+            filter_input.focus()
+            return
         self.dismiss(None)
 
 

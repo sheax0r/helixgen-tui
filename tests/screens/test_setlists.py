@@ -618,6 +618,153 @@ async def test_setlist_filter_escape_clears_and_refocuses_table():
         assert left.has_focus
 
 
+# --- #10: fuzzy filter + enter-to-add in AddToneModal ----------------------
+
+# Same ranking shape as the setlists fixture: the gappy "jcm" match sorts first
+# natively, the contiguous one must outrank it once filtered.
+_FUZZY_TONES = [
+    ToneVM(
+        name="Jazz Chorus Mod",
+        tone_id="tone-jazz",
+        guitar=None,
+        description=None,
+        sync=SyncState.LOCAL_ONLY,
+        setlists=(),
+    ),
+    ToneVM(
+        name="JCM800 Crunch",
+        tone_id="tone-jcm",
+        guitar=None,
+        description=None,
+        sync=SyncState.LOCAL_ONLY,
+        setlists=(),
+    ),
+    ToneVM(
+        name="Reverb Night",
+        tone_id="tone-reverb",
+        guitar=None,
+        description=None,
+        sync=SyncState.LOCAL_ONLY,
+        setlists=(),
+    ),
+]
+
+# Empty setlist, so every tone above is a candidate in the picker.
+_EMPTY_SETLIST = [SetlistVM(name="Gig 1", sync_enabled=True, tones=())]
+
+
+async def _open_add_tone_modal(pilot, core):
+    await _goto_setlists(pilot)
+    pilot.app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable).focus()
+    await pilot.pause()
+    await pilot.press("a")
+    await pilot.pause()
+    assert isinstance(pilot.app.screen, AddToneModal)
+
+
+def _fuzzy_picker_app():
+    core = FakeCore(tones=list(_FUZZY_TONES), setlists=list(_EMPTY_SETLIST))
+    return core, HelixgenTuiApp(core, device_spawn=_sync_spawn)
+
+
+async def test_add_tone_modal_filter_is_focused_on_mount():
+    """The filter input has focus when the modal opens, so the user can type
+    immediately."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        assert app.screen.query_one("#add-tone-filter", Input).has_focus
+
+
+async def test_add_tone_modal_filter_narrows_and_ranks():
+    """Typing in the modal filter narrows the candidate list, best match first."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        for char in "jcm":
+            await pilot.press(char)
+        await pilot.pause()
+
+        picker = app.screen.query_one(DataTable)
+        assert _table_rows(picker) == ["JCM800 Crunch", "Jazz Chorus Mod"]
+
+
+async def test_add_tone_modal_enter_adds_top_hit():
+    """Type a query, press Enter in the filter: the modal dismisses with the
+    top-ranked tone's id and that tone is added to the setlist."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        for char in "jcm":
+            await pilot.press(char)
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, AddToneModal)
+        assert ("add_tone", ("Gig 1", "tone-jcm")) in core.setlists.calls
+        right = app.screen.query_one(f"#{_TONES_TABLE_ID}", DataTable)
+        assert _table_rows(right) == ["JCM800 Crunch"]
+
+
+async def test_add_tone_modal_row_selected_still_works():
+    """Arrow to a specific row and press Enter on the table: still dismisses
+    with THAT row's tone id, not the top hit."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        for char in "jcm":
+            await pilot.press(char)
+        await pilot.pause()
+
+        picker = app.screen.query_one(DataTable)
+        picker.focus()
+        await pilot.pause()
+        await pilot.press("down")  # row 1 = "Jazz Chorus Mod", not the top hit
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, AddToneModal)
+        assert ("add_tone", ("Gig 1", "tone-jazz")) in core.setlists.calls
+
+
+async def test_add_tone_modal_escape_clears_filter_then_cancels():
+    """Escape clears a non-empty filter; a second escape cancels with None."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        for char in "jcm":
+            await pilot.press(char)
+        await pilot.pause()
+        picker = app.screen.query_one(DataTable)
+        assert picker.row_count == 2
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, AddToneModal)  # still open
+        assert app.screen.query_one("#add-tone-filter", Input).value == ""
+        assert app.screen.query_one(DataTable).row_count == 3
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, SetlistsScreen)
+        assert core.setlists.calls == []
+
+
+async def test_add_tone_modal_escape_still_cancels():
+    """Escape on an empty filter dismisses with None; adding nothing."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, SetlistsScreen)
+        assert core.setlists.calls == []
+
+
 async def test_bracketed_names_render_literally_no_crash():
     """Markup regression (#12): setlist names, setlist-tone names, and the
     AddToneModal picker must render bracket-bearing names verbatim, never crash."""
