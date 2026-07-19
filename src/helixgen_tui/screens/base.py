@@ -8,7 +8,6 @@ from textual.screen import Screen
 from textual.widgets import Footer
 
 from helixgen_tui.core.models import OpResult
-from helixgen_tui.screens.filterable import capture_cursor_key, restore_cursor_key
 from helixgen_tui.widgets.status_footer import StatusFooter
 from helixgen_tui.widgets.tab_strip import TabStrip
 
@@ -57,13 +56,6 @@ class LibrarianScreen(Screen):
         footer.set_device_text(self.app.device_text)
         if self.app.last_action:
             footer.set_last_action(self.app.last_action)
-
-    # The capture/restore pair lives in ``screens.filterable`` so the filter
-    # mixin — which serves modals that are not LibrarianScreens — can reach it
-    # without duplicating the logic. Kept here as delegating statics because
-    # every mode screen already calls them by these names.
-    _capture_cursor_key = staticmethod(capture_cursor_key)
-    _restore_cursor_key = staticmethod(restore_cursor_key)
 
     def _offline(self, message: str | None = None) -> bool:
         """True (and reports it to the footer) when no device is connected —

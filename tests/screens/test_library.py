@@ -592,3 +592,44 @@ async def test_bracketed_tone_name_renders_literally_no_crash():
         assert table.row_count == 1
         assert str(table.get_cell_at((0, 0))) == "Bad [/] name"
         assert str(table.get_cell_at((0, 1))) == "[reverb]"
+
+
+async def test_enter_on_a_no_match_filter_does_not_activate_or_crash():
+    """The mixin's empty-_visible guard: Enter in the *filter input* (not the
+    table) with nothing matching must be a no-op, not an IndexError."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "zzzz":
+            await pilot.press(char)
+        await pilot.pause()
+        assert table.row_count == 0
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert port.calls == []
+        assert isinstance(app.screen, LibraryScreen)
+
+
+async def test_enter_on_an_empty_filter_does_not_activate():
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await pilot.press("/")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert port.calls == []
+        assert isinstance(app.screen, LibraryScreen)

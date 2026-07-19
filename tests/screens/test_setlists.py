@@ -804,3 +804,81 @@ async def test_bracketed_names_render_literally_no_crash():
         assert isinstance(app.screen, AddToneModal)
         picker = app.screen.query_one(DataTable)
         assert str(picker.get_cell_at((0, 0))) == "Picker [x] tone"
+
+
+async def test_add_tone_modal_enter_on_empty_filter_uses_the_cursor_row():
+    """With no query there is no "top hit" — row 0 is just native order — so
+    Enter must follow the table cursor rather than committing an arbitrary tone."""
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        picker = app.screen.query_one(DataTable)
+        expected = str(picker.get_cell_at((1, 0)))
+        picker.move_cursor(row=1)
+        await pilot.pause()
+
+        app.screen.query_one("#add-tone-filter", Input).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        added = [call for call in core.setlists.calls if call[0] == "add_tone"]
+        assert len(added) == 1
+        tone_id = added[0][1][1]
+        assert next(t.name for t in _FUZZY_TONES if t.tone_id == tone_id) == expected
+
+
+async def test_add_tone_modal_enter_on_no_match_does_not_add():
+    core, app = _fuzzy_picker_app()
+    async with app.run_test() as pilot:
+        await _open_add_tone_modal(pilot, core)
+        for char in "zzzz":
+            await pilot.press(char)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert core.setlists.calls == []
+        assert app.screen.query_one("#add-tone-filter", Input) is not None  # still open
+
+
+async def test_escape_with_no_filter_leaves_the_tones_pane_focused():
+    """Escape unwinds a live query. With nothing to unwind it must not yank the
+    cursor off the tones pane mid-reorder."""
+    app = _app()
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        tones_table = app.screen.query_one("#setlist-tones-table", DataTable)
+        tones_table.focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert tones_table.has_focus
+
+
+async def test_escape_with_a_live_filter_still_returns_to_the_setlists_pane():
+    app = _app()
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        filter_input = app.screen.query_one("#setlists-filter", Input)
+        filter_input.value = "gig 2"
+        await pilot.pause()
+        app.screen.query_one("#setlist-tones-table", DataTable).focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert filter_input.value == ""
+        assert app.screen.query_one("#setlists-table", DataTable).has_focus
+
+
+async def test_enter_on_an_empty_setlists_filter_does_not_sync():
+    app = _app()
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await pilot.press("slash")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.core.setlists.calls == []

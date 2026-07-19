@@ -31,7 +31,11 @@ from textual.widgets import DataTable, Input, Static
 from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import MutationPlan, OpResult, SetlistVM, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
-from helixgen_tui.screens.filterable import FilterableTableMixin
+from helixgen_tui.screens.filterable import (
+    FilterableTableMixin,
+    capture_cursor_key,
+    restore_cursor_key,
+)
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _SETLIST_TABLE_ID = "setlists-table"
@@ -84,7 +88,7 @@ class AddToneModal(FilterableTableMixin, ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Container():
-            yield Static("Add tone — enter to pick, escape to cancel")
+            yield Static("Add tone — type to filter, enter to pick, escape to cancel")
             yield Input(placeholder="filter", id=_ADD_TONE_FILTER_ID)
             yield DataTable(id=_ADD_TONE_TABLE_ID, cursor_type="row")
 
@@ -104,7 +108,7 @@ class AddToneModal(FilterableTableMixin, ModalScreen[str | None]):
     def filter_row(self, item: ToneVM, label: Text) -> tuple[object, ...]:
         return (label,)
 
-    def filter_row_key(self, item: ToneVM) -> str:
+    def filter_row_key(self, item: ToneVM, position: int) -> str:
         return item.tone_id
 
     def filter_on_enter(self, item: ToneVM) -> None:
@@ -222,7 +226,7 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
         """Re-read setlists from core.setlists and rebuild both panes."""
         self._setlists = self.app.core.setlists.list_setlists()
         self._tone_order = {sl.name: list(sl.tones) for sl in self._setlists}
-        self._rebuild_setlist_table()
+        self.rebuild_filtered()
         self._rebuild_tones_table()
 
     def action_refresh(self) -> None:
@@ -232,9 +236,6 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
         """Re-read on every return to this (singleton) mode screen — on_mount
         fires once, so a setlist added elsewhere would otherwise stay hidden."""
         self.refresh_setlists()
-
-    def _rebuild_setlist_table(self) -> None:
-        self.rebuild_filtered()
 
     # -- FilterableTableMixin hooks ----------------------------------------
 
@@ -247,26 +248,25 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
     def filter_row(self, item: SetlistVM, label: Text) -> tuple[object, ...]:
         return (label, "✓" if item.sync_enabled else "○")
 
-    def filter_row_key(self, item: SetlistVM) -> str:
+    def filter_row_key(self, item: SetlistVM, position: int) -> str:
         return item.name
-
-    def filter_on_enter(self, item: SetlistVM) -> None:
-        """Enter in the filter jumps the left cursor to the best match and
-        stops there — the tones pane follows via RowHighlighted. Syncing stays
-        on ``S`` / ``A``: a device write is never a side effect of searching."""
-        self.move_cursor_to(item)
 
     def action_focus_filter(self) -> None:
         self.query_one(f"#{_FILTER_ID}", Input).focus()
 
     def action_clear_filter(self) -> None:
+        """Escape drops a live query and returns to the setlists pane. With no
+        query there is nothing to unwind, so it must not yank focus off the
+        tones pane mid-reorder."""
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
+        if not filter_input.value:
+            return
         filter_input.value = ""  # triggers Input.Changed -> rebuild
         self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable).focus()
 
     @on(Input.Changed, f"#{_FILTER_ID}")
     def _on_filter_changed(self, event: Input.Changed) -> None:
-        self._rebuild_setlist_table()
+        self.rebuild_filtered()
         # Re-ranking can put a different setlist under an unmoved cursor, which
         # fires no RowHighlighted — rebuild the right pane explicitly.
         self._rebuild_tones_table()
@@ -283,7 +283,7 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
         # right pane to the top — restoring by tone_id there would wrongly stick
         # the cursor to a tone the two setlists happen to share.
         same_setlist = setlist is not None and setlist.name == self._tones_setlist_name
-        prev_key = self._capture_cursor_key(table) if same_setlist else None
+        prev_key = capture_cursor_key(table) if same_setlist else None
         table.clear()
         self._tones_setlist_name = setlist.name if setlist is not None else None
         if setlist is None:
@@ -292,7 +292,7 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
             tone = self.app.core.library.get_tone(tone_id)
             name = tone.name if tone is not None else tone_id
             table.add_row(Text(name), key=tone_id)
-        self._restore_cursor_key(table, prev_key)
+        restore_cursor_key(table, prev_key)
 
     @on(DataTable.RowHighlighted, f"#{_SETLIST_TABLE_ID}")
     def _on_setlist_highlighted(self, event: DataTable.RowHighlighted) -> None:

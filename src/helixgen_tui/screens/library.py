@@ -85,9 +85,6 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
         A plain sync method (not a worker) — local library reads are cheap.
         """
         self._tones = self.app.core.library.list_tones()
-        self._rebuild_table()
-
-    def _rebuild_table(self) -> None:
         self.rebuild_filtered()
 
     # -- FilterableTableMixin hooks ----------------------------------------
@@ -101,14 +98,8 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
     def filter_row(self, item: ToneVM, label: Text) -> tuple[object, ...]:
         return (label, Text(item.guitar or ""), _SYNC_GLYPH[item.sync])
 
-    def filter_row_key(self, item: ToneVM) -> str:
+    def filter_row_key(self, item: ToneVM, position: int) -> str:
         return item.tone_id
-
-    def filter_on_enter(self, item: ToneVM) -> None:
-        """Enter in the filter jumps the cursor to the best match — and stops
-        there. Activating or syncing stays on ``a`` / ``s``: a device write is
-        never a side effect of searching."""
-        self.move_cursor_to(item)
 
     def action_refresh(self) -> None:
         self.refresh_tones()
@@ -129,7 +120,7 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
 
     @on(Input.Changed, f"#{_FILTER_ID}")
     def _on_filter_changed(self, event: Input.Changed) -> None:
-        self._rebuild_table()
+        self.rebuild_filtered()
 
     @on(Input.Submitted, f"#{_FILTER_ID}")
     def _on_filter_submitted(self, event: Input.Submitted) -> None:

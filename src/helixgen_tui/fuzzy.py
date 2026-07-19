@@ -23,9 +23,17 @@ _SEPARATORS = " -_/.()[]"
 _CONTIGUOUS_BONUS = 8
 _BOUNDARY_BONUS = 6
 _PREFIX_BONUS = 10
-_POSITION_PENALTY = 1
-_UNMATCHED_TAIL_PENALTY = 1
+_GAP_PENALTY = 2
 _MAX_POSITION_PENALTY = 20
+
+
+def _lower(text: str) -> str:
+    """Lowercase without changing length.
+
+    ``str.lower()`` is not length-preserving (``'İ'.lower()`` is two chars), and
+    ``Match.indices`` are offsets into the *original* text. Folding per character
+    and keeping only the first result keeps the mapping 1:1."""
+    return "".join(char.lower()[0] for char in text)
 
 
 @dataclass(frozen=True)
@@ -50,17 +58,16 @@ def match(query: str, text: str) -> Match | None:
     if not query:
         return Match(score=0, indices=())
 
-    lowered_query = query.lower()
-    lowered_text = text.lower()
+    lowered_query = _lower(query)
+    lowered_text = _lower(text)
 
     def placement_score(index: int) -> int:
         """Score of matching a character at ``index``, ignoring its predecessor."""
-        score = -min(index, _MAX_POSITION_PENALTY) * _POSITION_PENALTY
         if index == 0:
-            score += _PREFIX_BONUS
-        elif lowered_text[index - 1] in _SEPARATORS:
-            score += _BOUNDARY_BONUS
-        return score
+            return _PREFIX_BONUS
+        if lowered_text[index - 1] in _SEPARATORS:
+            return _BOUNDARY_BONUS
+        return 0
 
     @lru_cache(maxsize=None)
     def best_from(query_pos: int, index: int) -> tuple[int, tuple[int, ...]] | None:
@@ -76,7 +83,12 @@ def match(query: str, text: str) -> Match | None:
         while candidate != -1:
             tail = best_from(query_pos + 1, candidate)
             if tail is not None:
-                score = tail[0] + (_CONTIGUOUS_BONUS if candidate == index + 1 else 0)
+                gap = candidate - index
+                # Adjacent characters earn the contiguity bonus; anything looser
+                # pays for every character it skipped, so a scattered match never
+                # outranks a real substring hit.
+                adjustment = _CONTIGUOUS_BONUS if gap == 1 else -(gap - 1) * _GAP_PENALTY
+                score = tail[0] + adjustment
                 if best is None or score > best[0]:
                     best = (score, tail[1])
             candidate = lowered_text.find(next_char, candidate + 1)
@@ -89,16 +101,19 @@ def match(query: str, text: str) -> Match | None:
     start = lowered_text.find(lowered_query[0])
     while start != -1:
         result = best_from(0, start)
-        if result is not None and (overall is None or result[0] > overall[0]):
-            overall = result
+        if result is not None:
+            # The position penalty is charged once, on where the match begins —
+            # not per matched character, which would scale it by query length and
+            # bury late substring hits under scattered early ones.
+            scored = (result[0] - min(start, _MAX_POSITION_PENALTY), result[1])
+            if overall is None or scored[0] > overall[0]:
+                overall = scored
         start = lowered_text.find(lowered_query[0], start + 1)
-
-    best_from.cache_clear()
 
     if overall is None:
         return None
 
     # Prefer tighter matches: a query that consumes most of the text beats one
     # buried in a long name.
-    tail_penalty = (len(lowered_text) - len(lowered_query)) * _UNMATCHED_TAIL_PENALTY
+    tail_penalty = len(lowered_text) - len(lowered_query)
     return Match(score=overall[0] - tail_penalty, indices=overall[1])

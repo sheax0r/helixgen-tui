@@ -58,8 +58,11 @@ class FilterableTableMixin:
       - ``filter_text(item) -> str``          primary text to match + highlight
       - ``filter_row(item, label) -> tuple``  cells for the row, given the
         pre-highlighted primary label
-      - ``filter_row_key(item) -> str | None``  stable key, or None for no key
+      - ``filter_row_key(item, position) -> str | None``  stable key, or None
+        for no key; ``position`` is the item's index in the *backing* list, for
+        hosts whose items carry no natural identifier
       - ``filter_on_enter(item) -> None``     primary action on the top hit
+        (defaults to moving the cursor there)
 
     Hosts also hook ``Input.Changed`` -> ``rebuild_filtered()`` and
     ``Input.Submitted`` -> ``handle_filter_submitted()``.
@@ -83,11 +86,17 @@ class FilterableTableMixin:
     def filter_row(self, item: Any, label: Text) -> tuple[Any, ...]:
         raise NotImplementedError
 
-    def filter_row_key(self, item: Any) -> str | None:
+    def filter_row_key(self, item: Any, position: int) -> str | None:
         raise NotImplementedError
 
     def filter_on_enter(self, item: Any) -> None:
-        raise NotImplementedError
+        """Park the table cursor on ``item`` and stop there.
+
+        The default for every browse surface: activate/sync/push/delete/rename
+        keep their own keys, so a device write is never a side effect of
+        searching. Only a picker whose whole purpose is committing a choice
+        (``AddToneModal``) overrides this."""
+        self.move_cursor_to(item)
 
     # -- the wiring --------------------------------------------------------
 
@@ -110,18 +119,17 @@ class FilterableTableMixin:
                 continue
             scored.append((result.score, position, item, result.indices))
 
-        if query:
-            # -score for best-first; position keeps native order stable within a tie.
-            scored.sort(key=lambda row: (-row[0], row[1]))
+        # -score for best-first; position keeps native order stable within a tie.
+        # An empty query scores every item 0, so this reproduces native order.
+        scored.sort(key=lambda row: (-row[0], row[1]))
 
         table.clear()
         self._visible = []
-        for _score, _position, item, indices in scored:
+        for _score, position, item, indices in scored:
             label = Text(self.filter_text(item))
-            if query:
-                for index in indices:
-                    label.stylize(HIGHLIGHT_STYLE, index, index + 1)
-            key = self.filter_row_key(item)
+            for index in indices:
+                label.stylize(HIGHLIGHT_STYLE, index, index + 1)
+            key = self.filter_row_key(item, position)
             table.add_row(*self.filter_row(item, label), key=key)
             self._visible.append(item)
 
@@ -144,7 +152,14 @@ class FilterableTableMixin:
         self.filter_table().move_cursor(row=index)
 
     def handle_filter_submitted(self) -> None:
-        """Enter in the filter input: act on the top-ranked hit, if any."""
+        """Enter in the filter input: act on the top-ranked hit, if any.
+
+        With no query there is no "top hit" — row 0 is just whatever sorts first
+        natively — so fall back to the row under the cursor. That keeps Enter on
+        an untouched filter from committing an arbitrary item in a picker."""
         if not self._visible:
             return
-        self.filter_on_enter(self._visible[0])
+        item = self._visible[0] if self.filter_query() else self.selected()
+        if item is None:
+            return
+        self.filter_on_enter(item)

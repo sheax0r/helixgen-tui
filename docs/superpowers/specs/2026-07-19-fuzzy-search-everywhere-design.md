@@ -2,7 +2,11 @@
 
 **Date:** 2026-07-19
 **Backlog:** #10 "Fuzzy search everywhere" (helixgen-tui `docs/BACKLOG.md`; workspace `BACKLOG.md` #10 residual)
-**Status:** approved, pre-implementation
+**Status:** shipped 2026-07-19 (branch `fuzzy-search-everywhere`)
+
+> Deviations from this design as written are noted inline below; the shipped
+> matcher is `src/helixgen_tui/fuzzy.py` and its module docstring is
+> authoritative where the two disagree.
 
 ## Goal
 
@@ -78,15 +82,27 @@ def match(query: str, text: str) -> Match | None:
   query that matches today still matches.
 - **Scoring** (relative, within a single query's result set): reward
   - contiguous runs of matched chars,
-  - matches at a word boundary / after a separator (space, `-`, `_`, `/`, `.`),
+  - matches at a word boundary / after a separator (shipped set:
+    `` " -_/.()[]" ``),
   - a match at position 0 (prefix),
-  - earlier overall position (tie-breaker).
+  - earlier overall position (tie-breaker). *Shipped:* this penalty is
+    charged **once**, on the index where the match begins. Charging it per
+    matched character scaled it by query length and buried real substring
+    hits under scattered early ones. Gaps between matched characters are
+    penalized separately, which is what keeps a scattered match from
+    outranking a contiguous one.
   Exact weights are an implementation detail; tests assert *ordering* properties,
   not absolute numbers (see Testing).
 - **`indices`** returns the chosen matched positions so a caller can bold them.
-  When multiple subsequences exist, pick the one the scorer selects (typically
-  greedy-leftmost with the contiguity/boundary bonuses applied); the same
-  positions used for scoring are the positions highlighted.
+  When multiple subsequences exist, pick the one the scorer selects; the same
+  positions used for scoring are the positions highlighted. *Shipped:* the
+  matcher runs a memoised search for the **best-scoring** alignment, not the
+  greedy-leftmost one this design assumed — a greedy walk scores `rh` against
+  "Crunch Rhythm" on the `r` of "Crunch" and never sees the boundary hit, so
+  the boundary and contiguity bonuses would be unreachable for most real
+  names. Indices are offsets into the *original* text: the matcher lowercases
+  per character so a codepoint whose `.lower()` grows (`'İ'`) cannot shift
+  them.
 - **Highlight helper** (may live in `fuzzy.py` or the mixin): given `text`,
   `indices`, and a Rich style, return a `rich.text.Text` with matched chars
   styled. Kept out of the pure core if it would pull in Rich; a thin wrapper is

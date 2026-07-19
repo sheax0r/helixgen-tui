@@ -84,7 +84,7 @@ before any code.
 
 ## 10. Fuzzy search everywhere (user request, 2026-07-18) — RESOLVED 2026-07-19
 
-Shipped in plan `docs/plans/2026-07-19-fuzzy-search-everywhere.md` (branch
+Shipped in plan `docs/plans/completed/2026-07-19-fuzzy-search-everywhere.md` (branch
 `fuzzy-search-everywhere`): a scored matcher in `src/helixgen_tui/fuzzy.py`
 (pure, no Textual/Rich), a shared `FilterableTableMixin`
 (`src/helixgen_tui/screens/filterable.py`) wiring a filter `Input` to a
@@ -273,6 +273,25 @@ guitar. Needs a decision on how a multi-field score combines (max-of-fields vs
 weighted sum) and where the highlight lands when the hit is not in the name
 column. `FilterableTableMixin` would grow a `filter_fields(item)` hook beside
 the existing `filter_text(item)`.
+
+## 21. Filter keystrokes do more work than they need to (review finding, 2026-07-19)
+
+Not a defect — no user-visible lag at present library/IR sizes — but two paths
+rebuild more than the keystroke changed:
+
+- `IrsScreen._on_filter_changed` calls `_rebuild_panes()`, which rebuilds
+  *both* panes. The inactive pane reports an empty query, so its rows are
+  byte-identical every time; only a focus switch can change them, and
+  `on_descendant_focus` already rebuilds for that. Could be
+  `self._active_pane().rebuild_filtered()`.
+- `SetlistsScreen._on_filter_changed` calls `_rebuild_tones_table()`, which does
+  one `library.get_tone()` per tone in the selected setlist, on every character
+  typed.
+- `FilterableTableMixin.rebuild_filtered` calls `filter_text(item)` twice per
+  item per keystroke (once to match, once to build the label).
+
+Worth revisiting if a large library ever makes typing feel sticky; measure
+before optimising.
 
 ## 19. `BlockPickerModal` fuzzy filter (deferred from #10, 2026-07-19)
 

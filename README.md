@@ -43,12 +43,16 @@ tabbed shell:
 Press `?` anywhere for the full key-binding reference, `q` to quit.
 
 **Fuzzy filter:** `/` opens a filter on the Library, Setlists, and IRs screens
-(on IRs it applies to whichever pane has focus). Type part of a name — matching
-is an ordered subsequence, so `jcm` finds "JCM800 Crunch"; matches sort
-best-first and the matched characters are highlighted. `enter` in a filter jumps
-the cursor to the best match and never mutates anything (activate, sync, push,
-delete stay on their own keys); `escape` clears the filter. The add-tone picker
-in Setlists filters the same way, where `enter` adds the best match.
+(on IRs it applies to whichever pane has focus — moving focus re-targets it, so
+the newly focused pane gets ranked and the other returns to its native order).
+Type part of a name — matching is an ordered subsequence, so `jcm` finds
+"JCM800 Crunch"; matches sort best-first and the matched characters are
+highlighted. `enter` in a filter jumps the cursor to the best match and never
+mutates anything (activate, sync, push, delete stay on their own keys); with no
+query typed it just follows the cursor. `escape` clears the filter, and on IRs
+it unwinds one step at a time — a live query goes first, so cancelling an open
+rename while filtering takes a second `escape`. The add-tone picker in Setlists
+filters the same way, where `enter` adds the best match.
 
 **Tone editor:** press `enter` on a Library tone to open its signal chain. The
 chain renders left-to-right — an input node, the blocks (both DSP paths stacked

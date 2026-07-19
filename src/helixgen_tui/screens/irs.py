@@ -104,10 +104,6 @@ class _IrPane(FilterableTableMixin):
         self.filter_input_id = _FILTER_ID
         self.filter_table_id = table_id
         self.active = False
-        # Row keys stay positional (IR display names routinely duplicate, and
-        # DataTable rejects a repeated key) but nothing derives a backing index
-        # from them any more — selection resolves through the mixin's _visible.
-        self._keys: dict[int, str] = {}
         super().__init__()
 
     def query_one(self, selector, expect_type=None):  # type: ignore[no-untyped-def]
@@ -117,9 +113,7 @@ class _IrPane(FilterableTableMixin):
         return super().filter_query() if self.active else ""
 
     def filter_items(self) -> Sequence[IrVM]:
-        items = self._items()
-        self._keys = {id(ir): str(position) for position, ir in enumerate(items)}
-        return items
+        return self._items()
 
     def filter_text(self, item: IrVM) -> str:
         return item.name
@@ -127,14 +121,11 @@ class _IrPane(FilterableTableMixin):
     def filter_row(self, item: IrVM, label: Text) -> tuple[object, ...]:
         return (label, Text(item.pack or ""), _short_hash(item.irhash))
 
-    def filter_row_key(self, item: IrVM) -> str | None:
-        return self._keys.get(id(item))
-
-    def filter_on_enter(self, item: IrVM) -> None:
-        """Enter in the filter parks the cursor on the best match and stops
-        there. Push/delete/rename/prune stay on ``p``/``d``/``R``/``P``: no
-        device write is ever a side effect of searching."""
-        self.move_cursor_to(item)
+    def filter_row_key(self, item: IrVM, position: int) -> str | None:
+        """Keys stay positional: IR display names routinely duplicate and
+        DataTable rejects a repeated key. Nothing derives a backing index from
+        them — selection resolves through the mixin's ``_visible``."""
+        return str(position)
 
 
 class IrsScreen(LibrarianScreen):
@@ -279,8 +270,19 @@ class IrsScreen(LibrarianScreen):
         if not result.ok or result.value is None:
             self._device_irs = []
             self._device_pane.rebuild_filtered()
+            had_focus = table.has_focus
             table.display = False
             placeholder.display = True
+            # Hiding the table fires no DescendantFocus, so the device pane would
+            # keep `active` while unreachable — leaving the shared filter inert on
+            # both panes (it skips the hidden one and the local one reads itself
+            # as inactive). Hand the filter back to the local pane by hand.
+            if self._device_pane.active:
+                self._device_pane.active = False
+                self._local_pane.active = True
+                self._local_pane.rebuild_filtered()
+                if had_focus:
+                    self.query_one(f"#{_LOCAL_TABLE_ID}", DataTable).focus()
             return
         self._device_irs = list(result.value)  # type: ignore[arg-type]
         self._device_pane.rebuild_filtered()
@@ -407,6 +409,9 @@ class IrsScreen(LibrarianScreen):
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
         if filter_input.value:
             filter_input.value = ""  # triggers Input.Changed -> rebuild
+            # Return focus to the pane the filter was targeting, so p/d/R/P act
+            # instead of typing into the input (matching Library and Setlists).
+            self.query_one(f"#{self._active_pane().filter_table_id}", DataTable).focus()
             return
         rename_input = self.query_one(f"#{_RENAME_INPUT_ID}", Input)
         if not rename_input.display:
