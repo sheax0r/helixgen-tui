@@ -231,7 +231,7 @@ Put the mixin in `src/helixgen_tui/screens/filterable.py` (a focused new module 
 `screens/base.py` already carries the shared cursor helpers and shouldn't grow a
 second concern).
 
-- [ ] Write the failing tests first. Extend `tests/screens/test_library.py` using the
+- [x] Write the failing tests first. Extend `tests/screens/test_library.py` using the
       established Textual pilot + fake-service pattern already in that file. Cover:
 
 ```python
@@ -263,9 +263,9 @@ async def test_gappy_subsequence_still_narrows():
     test must keep passing under the scored matcher."""
 ```
 
-- [ ] Run them to confirm they fail for the expected reason:
+- [x] Run them to confirm they fail for the expected reason:
       `uv run pytest tests/screens/test_library.py -v`
-- [ ] Implement `src/helixgen_tui/screens/filterable.py`. Required surface:
+- [x] Implement `src/helixgen_tui/screens/filterable.py`. Required surface:
 
 ```python
 """Shared filter/rank/highlight wiring for a filter Input over a DataTable.
@@ -360,7 +360,7 @@ class FilterableTableMixin:
   - Hosts hook `Input.Changed` → `rebuild_filtered()` and `Input.Submitted` →
     `handle_filter_submitted()`.
 
-- [ ] Rewire `src/helixgen_tui/screens/library.py`:
+- [x] Rewire `src/helixgen_tui/screens/library.py`:
   - Delete `_subsequence_match` (L35-43) entirely — the matcher now lives in `fuzzy.py`.
   - Make `LibraryScreen` inherit the mixin alongside `LibrarianScreen`.
   - Replace the `_rebuild_table` filter loop with `rebuild_filtered()`, supplying
@@ -369,11 +369,11 @@ class FilterableTableMixin:
   - `filter_on_enter(tone)` moves the table cursor to that tone's row. It must **not**
     call `action_make_active` or `action_sync_tone` — those stay on `a` / `s`.
   - Keep the `/` focus and `escape` clear bindings exactly as they are.
-- [ ] Run the tests and confirm they pass:
+- [x] Run the tests and confirm they pass:
       `uv run pytest tests/test_fuzzy.py tests/screens/test_library.py -v`
-- [ ] Run the full suite — this task touches shared code:
+- [x] Run the full suite — this task touches shared code:
       `uv run pytest` and `uv run ruff check .`
-- [ ] Commit: `feat: add FilterableTableMixin, rank + highlight library filter (#10)`
+- [x] Commit: `feat: add FilterableTableMixin, rank + highlight library filter (#10)`
 
 ### Task 3: Setlists left pane filter
 

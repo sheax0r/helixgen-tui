@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.coordinate import Coordinate
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer
-from textual.widgets.data_table import RowDoesNotExist
+from textual.widgets import Footer
 
 from helixgen_tui.core.models import OpResult
+from helixgen_tui.screens.filterable import capture_cursor_key, restore_cursor_key
 from helixgen_tui.widgets.status_footer import StatusFooter
 from helixgen_tui.widgets.tab_strip import TabStrip
 
@@ -59,31 +58,12 @@ class LibrarianScreen(Screen):
         if self.app.last_action:
             footer.set_last_action(self.app.last_action)
 
-    @staticmethod
-    def _capture_cursor_key(table: DataTable) -> str | None:
-        """The row key under the table cursor, or None on an empty table.
-
-        Captured before a ``clear()``/rebuild so the cursor can be restored to
-        the same row afterward — a ScreenResume rebuild would otherwise snap it
-        back to row 0 (cosmetic noise; #8a)."""
-        if table.row_count == 0:
-            return None
-        return table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key.value
-
-    @staticmethod
-    def _restore_cursor_key(table: DataTable, key: str | None) -> None:
-        """Move the cursor back to the row with ``key`` after a rebuild.
-
-        No-op (cursor stays at row 0) when nothing was captured or the row is
-        gone after the rebuild — the graceful fall-back for a filtered-out or
-        deleted row."""
-        if key is None:
-            return
-        try:
-            index = table.get_row_index(key)
-        except RowDoesNotExist:
-            return
-        table.move_cursor(row=index)
+    # The capture/restore pair lives in ``screens.filterable`` so the filter
+    # mixin — which serves modals that are not LibrarianScreens — can reach it
+    # without duplicating the logic. Kept here as delegating statics because
+    # every mode screen already calls them by these names.
+    _capture_cursor_key = staticmethod(capture_cursor_key)
+    _restore_cursor_key = staticmethod(restore_cursor_key)
 
     def _offline(self, message: str | None = None) -> bool:
         """True (and reports it to the footer) when no device is connected —

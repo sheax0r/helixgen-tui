@@ -13,12 +13,12 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable, Input
 
 from helixgen_tui.core.models import MutationPlan, OpResult, SyncState, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.filterable import FilterableTableMixin
 from helixgen_tui.screens.tone_editor import ToneEditorScreen
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
@@ -30,17 +30,6 @@ _SYNC_GLYPH = {
 
 _FILTER_ID = "library-filter"
 _TABLE_ID = "library-table"
-
-
-def _subsequence_match(query: str, text: str) -> bool:
-    """Case-insensitive ordered-subsequence match — the standard fuzzy-finder
-    default. Every character of ``query`` appears in ``text`` in order (gaps
-    allowed). An empty query matches everything. Strictly a superset of a
-    contiguous-substring match."""
-    query = query.lower()
-    text = text.lower()
-    it = iter(text)
-    return all(char in it for char in query)
 
 
 class ActivateToneRequested(Message):
@@ -58,11 +47,14 @@ class ActivateToneRequested(Message):
         super().__init__()
 
 
-class LibraryScreen(LibrarianScreen):
+class LibraryScreen(FilterableTableMixin, LibrarianScreen):
     """Library-mode screen: browse tones, view details, filter, refresh, activate, sync."""
 
     TAB_LABEL = "Library"
     MODE_NAME = "library"
+
+    filter_input_id = _FILTER_ID
+    filter_table_id = _TABLE_ID
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
@@ -96,20 +88,27 @@ class LibraryScreen(LibrarianScreen):
         self._rebuild_table()
 
     def _rebuild_table(self) -> None:
-        table = self.query_one(f"#{_TABLE_ID}", DataTable)
-        prev_key = self._capture_cursor_key(table)
-        table.clear()
-        query = self.query_one(f"#{_FILTER_ID}", Input).value.strip().lower()
-        for tone in self._tones:
-            if query and not _subsequence_match(query, tone.name):
-                continue
-            table.add_row(
-                Text(tone.name),
-                Text(tone.guitar or ""),
-                _SYNC_GLYPH[tone.sync],
-                key=tone.tone_id,
-            )
-        self._restore_cursor_key(table, prev_key)
+        self.rebuild_filtered()
+
+    # -- FilterableTableMixin hooks ----------------------------------------
+
+    def filter_items(self) -> list[ToneVM]:
+        return self._tones
+
+    def filter_text(self, item: ToneVM) -> str:
+        return item.name
+
+    def filter_row(self, item: ToneVM, label: Text) -> tuple[object, ...]:
+        return (label, Text(item.guitar or ""), _SYNC_GLYPH[item.sync])
+
+    def filter_row_key(self, item: ToneVM) -> str:
+        return item.tone_id
+
+    def filter_on_enter(self, item: ToneVM) -> None:
+        """Enter in the filter jumps the cursor to the best match — and stops
+        there. Activating or syncing stays on ``a`` / ``s``: a device write is
+        never a side effect of searching."""
+        self.move_cursor_to(item)
 
     def action_refresh(self) -> None:
         self.refresh_tones()
@@ -132,6 +131,10 @@ class LibraryScreen(LibrarianScreen):
     def _on_filter_changed(self, event: Input.Changed) -> None:
         self._rebuild_table()
 
+    @on(Input.Submitted, f"#{_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self.handle_filter_submitted()
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         tone_id = event.row_key.value
         # Enter drills into the param editor for this tone. get_chain returns
@@ -146,12 +149,11 @@ class LibraryScreen(LibrarianScreen):
     # -- device actions ----------------------------------------------------
 
     def _selected_tone(self) -> ToneVM | None:
-        """The tone under the table cursor, or None on an empty/filtered table."""
-        table = self.query_one(f"#{_TABLE_ID}", DataTable)
-        if table.row_count == 0:
-            return None
-        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        return self.app.core.library.get_tone(row_key.value)
+        """The tone under the table cursor, or None on an empty/filtered table.
+
+        Resolved through the mixin's visible list, not by parsing row keys, so
+        a ranked/filtered table never maps a cursor row to the wrong tone."""
+        return self.selected()
 
     def _activate(self, tone_id: str) -> None:
         """Launch the make-active worker. Always called on the UI thread (a key

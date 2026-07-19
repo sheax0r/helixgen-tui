@@ -163,6 +163,107 @@ async def test_filter_matches_gappy_subsequence():
         assert "Foo Fighters - Everlong" in str(table.get_cell_at((0, 0)))
 
 
+_RANKING_TONES = [
+    # native order puts the gappy match first — ranking must reorder it below
+    # the contiguous one when "jcm" is typed.
+    ToneVM(
+        name="Jazz Chorus Mod",
+        tone_id="tone-jazz",
+        guitar="Strat",
+        description=None,
+        sync=SyncState.SYNCED,
+        setlists=(),
+    ),
+    ToneVM(
+        name="JCM800 Crunch",
+        tone_id="tone-jcm",
+        guitar="LP",
+        description=None,
+        sync=SyncState.SYNCED,
+        setlists=(),
+    ),
+]
+
+
+async def test_filter_ranks_best_match_first():
+    """With a query active, the best match is row 0 even if it is later in
+    native library order."""
+    app = HelixgenTuiApp(_core(tones=list(_RANKING_TONES)))
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        assert str(table.get_cell_at((0, 0))) == "Jazz Chorus Mod"
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        assert table.row_count == 2
+        assert str(table.get_cell_at((0, 0))) == "JCM800 Crunch"
+
+
+async def test_empty_filter_restores_native_order():
+    """Clearing the filter restores the library's own ordering, unsorted."""
+    app = HelixgenTuiApp(_core(tones=list(_RANKING_TONES)))
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        assert str(table.get_cell_at((0, 0))) == "JCM800 Crunch"
+        for _ in range(3):
+            await pilot.press("backspace")
+        assert [str(table.get_cell_at((row, 0))) for row in range(table.row_count)] == [
+            "Jazz Chorus Mod",
+            "JCM800 Crunch",
+        ]
+
+
+async def test_filter_highlights_matched_characters():
+    """The Tone cell for a filtered row is a rich Text whose matched character
+    positions carry the highlight style."""
+    from helixgen_tui.fuzzy import match
+    from helixgen_tui.screens.filterable import HIGHLIGHT_STYLE
+
+    app = HelixgenTuiApp(_core(tones=list(_RANKING_TONES)))
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        label = table.get_cell_at((0, 0))
+        assert str(label) == "JCM800 Crunch"
+        highlighted = {
+            offset
+            for span in label.spans
+            if span.style == HIGHLIGHT_STYLE
+            for offset in range(span.start, span.end)
+        }
+        expected = match("jcm", "JCM800 Crunch")
+        assert expected is not None
+        assert highlighted == set(expected.indices)
+
+
+async def test_enter_on_filter_moves_cursor_to_top_hit_without_activating():
+    """Enter in the filter input moves the table cursor to the top hit and does
+    NOT call the device service (no activate, no sync)."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert table.cursor_row == 0
+        assert str(table.get_cell_at((table.cursor_row, 0))) == "JCM800 Crunch"
+        assert port.calls == []
+        assert isinstance(app.screen, LibraryScreen)
+
+
 async def test_escape_clears_filter():
     app = HelixgenTuiApp(_core())
     async with app.run_test() as pilot:
