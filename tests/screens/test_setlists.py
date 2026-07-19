@@ -6,11 +6,16 @@ import re
 
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.models import DeviceStateVM, OpResult, SetlistVM, SyncState, ToneVM
-from helixgen_tui.screens.setlists import AddToneModal, SetlistsScreen
+from helixgen_tui.screens.setlists import (
+    _SETLIST_TABLE_ID,
+    _TONES_TABLE_ID,
+    AddToneModal,
+    SetlistsScreen,
+)
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
 from textual.coordinate import Coordinate
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Input
 
 from fake_core import FakeCore, FakeDevicePort
 
@@ -489,6 +494,128 @@ async def test_switching_setlist_resets_tones_cursor_even_when_tone_shared():
         right = app.screen.query(DataTable)[1]
         assert _table_rows(right)[0] == "Radiohead - Everything In Its Right Place"
         assert right.cursor_row == 0  # reset to top, not stuck on shared tone-2
+
+
+# --- #10: fuzzy filter on the setlists left pane ---------------------------
+
+# "Jazz Chorus Mod" is a gappy match for "jcm" and sorts FIRST natively;
+# "JCM800 Crunch" is a contiguous match and must outrank it once filtered.
+_FUZZY_SETLISTS = [
+    SetlistVM(name="Jazz Chorus Mod", sync_enabled=True, tones=("tone-1",)),
+    SetlistVM(name="JCM800 Crunch", sync_enabled=False, tones=("tone-2",)),
+    SetlistVM(name="Reverb Night", sync_enabled=False, tones=("tone-3",)),
+]
+
+
+async def _type_setlist_filter(pilot, query: str):
+    """Focus the left pane, open the filter with ``/``, type ``query``."""
+    pilot.app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable).focus()
+    await pilot.pause()
+    await pilot.press("slash")
+    await pilot.pause()
+    for char in query:
+        await pilot.press(char)
+    await pilot.pause()
+
+
+async def test_setlist_filter_narrows_and_ranks():
+    """Typing into the setlists filter narrows the left pane and puts the best
+    match at row 0."""
+    app = _app(setlists=list(_FUZZY_SETLISTS))
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await _type_setlist_filter(pilot, "jcm")
+
+        left = app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        names = [row.split("\t")[0] for row in _table_rows(left)]
+        assert names == ["JCM800 Crunch", "Jazz Chorus Mod"]  # "Reverb Night" filtered out
+
+
+async def test_setlist_filter_empty_restores_all():
+    """Clearing the filter shows every setlist in native order."""
+    app = _app(setlists=list(_FUZZY_SETLISTS))
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await _type_setlist_filter(pilot, "jcm")
+        left = app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        assert left.row_count == 2
+
+        await pilot.press("backspace", "backspace", "backspace")
+        await pilot.pause()
+
+        names = [row.split("\t")[0] for row in _table_rows(left)]
+        assert names == ["Jazz Chorus Mod", "JCM800 Crunch", "Reverb Night"]
+
+
+async def test_enter_on_setlist_filter_moves_cursor_to_top_hit():
+    """Enter moves the left-pane cursor to the top hit; the right-hand tones
+    pane rebuilds for that setlist (RowHighlighted fires as usual)."""
+    app = _app(setlists=list(_FUZZY_SETLISTS))
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await _type_setlist_filter(pilot, "jcm")
+
+        left = app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        # the cursor was restored to the previously-cursored "Jazz Chorus Mod",
+        # which the ranking pushed down to row 1
+        assert left.cursor_row == 1
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert left.cursor_row == 0
+        assert app.screen._selected_setlist().name == "JCM800 Crunch"
+        right = app.screen.query_one(f"#{_TONES_TABLE_ID}", DataTable)
+        assert _table_rows(right) == ["Foo Fighters - Everlong"]  # tone-2
+
+
+async def test_enter_on_setlist_filter_does_not_sync():
+    """Enter is navigation only — it must never touch the device."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(tones=list(_TONES), setlists=list(_FUZZY_SETLISTS), device=port)
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await _type_setlist_filter(pilot, "jcm")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert port.calls == []
+        assert core.setlists.calls == []
+
+
+async def test_setlist_filter_does_not_break_tones_pane():
+    """With a filter active, the tones pane still shows the tones of the
+    cursored setlist, not of a stale index."""
+    app = _app(setlists=list(_FUZZY_SETLISTS))
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        # "reverb" is the last setlist natively; filtering to it alone must
+        # resolve row 0 to Reverb Night, not to native index 0.
+        await _type_setlist_filter(pilot, "reverb")
+
+        left = app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        assert left.row_count == 1
+        assert app.screen._selected_setlist().name == "Reverb Night"
+        right = app.screen.query_one(f"#{_TONES_TABLE_ID}", DataTable)
+        assert _table_rows(right) == ["Radiohead - Everything In Its Right Place"]  # tone-3
+
+
+async def test_setlist_filter_escape_clears_and_refocuses_table():
+    """Escape clears a non-empty filter and returns focus to the left pane."""
+    app = _app(setlists=list(_FUZZY_SETLISTS))
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await _type_setlist_filter(pilot, "jcm")
+        left = app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        assert left.row_count == 2
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.screen.query_one("#setlists-filter", Input).value == ""
+        assert left.row_count == 3
+        assert left.has_focus
 
 
 async def test_bracketed_names_render_literally_no_crash():

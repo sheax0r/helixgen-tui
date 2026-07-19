@@ -22,19 +22,22 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import MutationPlan, OpResult, SetlistVM, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.filterable import FilterableTableMixin
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _SETLIST_TABLE_ID = "setlists-table"
 _TONES_TABLE_ID = "setlist-tones-table"
+_FILTER_ID = "setlists-filter"
+_LEFT_PANE_ID = "setlists-left-pane"
 
 
 class AddToneModal(ModalScreen[str | None]):
@@ -100,20 +103,28 @@ class SyncAllPlanReady(Message):
         super().__init__()
 
 
-class SetlistsScreen(LibrarianScreen):
+class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
     """Setlists-mode screen: membership, ordering, and sync."""
 
     TAB_LABEL = "Setlists"
     MODE_NAME = "setlists"
+
+    filter_input_id = _FILTER_ID
+    filter_table_id = _SETLIST_TABLE_ID
 
     DEFAULT_CSS = f"""
     SetlistsScreen Horizontal {{
         height: 1fr;
     }}
 
-    SetlistsScreen #{_SETLIST_TABLE_ID} {{
+    SetlistsScreen #{_LEFT_PANE_ID} {{
         width: 1fr;
         height: 100%;
+    }}
+
+    SetlistsScreen #{_SETLIST_TABLE_ID} {{
+        width: 100%;
+        height: 1fr;
     }}
 
     SetlistsScreen #{_TONES_TABLE_ID} {{
@@ -130,6 +141,8 @@ class SetlistsScreen(LibrarianScreen):
         Binding("K", "move_up", "Move up"),
         Binding("S", "sync_setlist", "Sync"),
         Binding("A", "sync_all", "Sync all"),
+        Binding("slash", "focus_filter", "Filter", key_display="/"),
+        Binding("escape", "clear_filter", "Clear", show=False),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -146,7 +159,11 @@ class SetlistsScreen(LibrarianScreen):
 
     def body(self) -> ComposeResult:
         with Horizontal():
-            yield DataTable(id=_SETLIST_TABLE_ID, cursor_type="row")
+            # The filter belongs to the left pane only, so it is stacked above
+            # that table rather than spanning both panes.
+            with Vertical(id=_LEFT_PANE_ID):
+                yield Input(placeholder="filter", id=_FILTER_ID)
+                yield DataTable(id=_SETLIST_TABLE_ID, cursor_type="row")
             yield DataTable(id=_TONES_TABLE_ID, cursor_type="row")
 
     def on_mount(self) -> None:
@@ -172,13 +189,46 @@ class SetlistsScreen(LibrarianScreen):
         self.refresh_setlists()
 
     def _rebuild_setlist_table(self) -> None:
-        table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
-        prev_key = self._capture_cursor_key(table)
-        table.clear()
-        for setlist in self._setlists:
-            glyph = "✓" if setlist.sync_enabled else "○"
-            table.add_row(Text(setlist.name), glyph, key=setlist.name)
-        self._restore_cursor_key(table, prev_key)
+        self.rebuild_filtered()
+
+    # -- FilterableTableMixin hooks ----------------------------------------
+
+    def filter_items(self) -> list[SetlistVM]:
+        return self._setlists
+
+    def filter_text(self, item: SetlistVM) -> str:
+        return item.name
+
+    def filter_row(self, item: SetlistVM, label: Text) -> tuple[object, ...]:
+        return (label, "✓" if item.sync_enabled else "○")
+
+    def filter_row_key(self, item: SetlistVM) -> str:
+        return item.name
+
+    def filter_on_enter(self, item: SetlistVM) -> None:
+        """Enter in the filter jumps the left cursor to the best match and
+        stops there — the tones pane follows via RowHighlighted. Syncing stays
+        on ``S`` / ``A``: a device write is never a side effect of searching."""
+        self.move_cursor_to(item)
+
+    def action_focus_filter(self) -> None:
+        self.query_one(f"#{_FILTER_ID}", Input).focus()
+
+    def action_clear_filter(self) -> None:
+        filter_input = self.query_one(f"#{_FILTER_ID}", Input)
+        filter_input.value = ""  # triggers Input.Changed -> rebuild
+        self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable).focus()
+
+    @on(Input.Changed, f"#{_FILTER_ID}")
+    def _on_filter_changed(self, event: Input.Changed) -> None:
+        self._rebuild_setlist_table()
+        # Re-ranking can put a different setlist under an unmoved cursor, which
+        # fires no RowHighlighted — rebuild the right pane explicitly.
+        self._rebuild_tones_table()
+
+    @on(Input.Submitted, f"#{_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self.handle_filter_submitted()
 
     def _rebuild_tones_table(self) -> None:
         table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
@@ -206,15 +256,11 @@ class SetlistsScreen(LibrarianScreen):
     # -- selection helpers ---------------------------------------------------
 
     def _selected_setlist(self) -> SetlistVM | None:
-        """The setlist under the left table's cursor, or None on an empty table."""
-        table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
-        if table.row_count == 0:
-            return None
-        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        for setlist in self._setlists:
-            if setlist.name == row_key.value:
-                return setlist
-        return None
+        """The setlist under the left table's cursor, or None on an empty table.
+
+        Resolved through the mixin's visible list, not by parsing row keys, so
+        a ranked/filtered pane never maps a cursor row to the wrong setlist."""
+        return self.selected()
 
     def _selected_tone_id(self) -> str | None:
         """The tone id under the right table's cursor, or None on an empty table."""

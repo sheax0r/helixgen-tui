@@ -377,7 +377,7 @@ class FilterableTableMixin:
 
 ### Task 3: Setlists left pane filter
 
-- [ ] Write the failing tests first in `tests/screens/test_setlists.py`:
+- [x] Write the failing tests first in `tests/screens/test_setlists.py`:
 
 ```python
 async def test_setlist_filter_narrows_and_ranks():
@@ -399,10 +399,13 @@ async def test_setlist_filter_does_not_break_tones_pane():
     cursored setlist, not of a stale index."""
 ```
 
-- [ ] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Implement in `src/helixgen_tui/screens/setlists.py`:
+- [x] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Implement in `src/helixgen_tui/screens/setlists.py`:
   - Add an `Input` with id `setlists-filter` above the `setlists-table` `DataTable`
     (id `setlists-table`, L149). Mirror Library's placeholder/CSS treatment.
+    **Shipped:** the two panes sit in a `Horizontal`, so the left table is wrapped
+    in a `Vertical` (id `setlists-left-pane`) holding the filter above it — that
+    keeps the filter scoped to the left pane instead of spanning both.
   - Add `Binding("slash", "focus_filter", "Filter", key_display="/")` and
     `Binding("escape", "clear_filter", "Clear", show=False)` to the screen's BINDINGS
     (currently L125-133) — same keys and behavior as Library, for consistency.
@@ -412,8 +415,11 @@ async def test_setlist_filter_does_not_break_tones_pane():
     `RowHighlighted` fire and rebuild the tones pane). No sync, no mutation.
   - Route `_selected_setlist()` (L208-217) through the mixin's `selected()` so a
     filtered pane resolves correctly.
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Commit: `feat: fuzzy filter on the setlists pane (#10)`
+  - **Also shipped:** `Input.Changed` rebuilds the tones pane explicitly. Re-ranking
+    can swap which setlist sits under an unmoved cursor, and that fires no
+    `RowHighlighted` — the right pane would otherwise go stale.
+- [x] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Commit: `feat: fuzzy filter on the setlists pane (#10)`
 
 ### Task 4: `AddToneModal` filter + enter-to-add
 
