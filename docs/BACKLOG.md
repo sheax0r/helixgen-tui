@@ -232,3 +232,25 @@ the chain fits-on-screen case works and every write path is atomic + fail-safe.
   edits are on disk yet `self._edits` still reads dirty. Self-corrects on the
   next (idempotent) save; no data loss. Fix: clear the portion that succeeded,
   or reload unconditionally and re-stage only what still differs.
+
+## 17. Signal-flow editor v2: live propagation to the active tone (from #13, 2026-07-18)
+
+The v0.3.0 signal-flow editor is **library-`.hsp`-only** — every edit writes the
+tone file, the device is never touched (same contract as the param editor).
+v2 makes editing the **currently-active** device tone propagate live:
+
+- **Param-class edits propagate live.** Output pan/level, block params, bypass,
+  and same-category model swap map onto core's live device verbs
+  (`device set-param` / `bypass` / `model`) — push them to the edit buffer as the
+  user edits, so the active tone changes in real time.
+- **Structural edits stay local, marked "save to hear."** Add/remove/swap of a
+  block has no live device protocol (core `mutate` is file-only), so these carry
+  a marker and only take effect on the device at the next explicit save.
+- **LIVE badge + write-gating.** Show the editor is bound to the active tone;
+  device writes stay explicit/visible per the product's write-gating rule, never
+  a navigation side effect. The **saved slot** updates only on `s` — live
+  propagation edits the edit buffer, not the stored preset, until save.
+- Deferred from v1 to keep the first editor release device-free. Needs the
+  active-tone binding + edit-buffer sync plumbing that v1 has no equivalent of.
+  Depends on nothing in core beyond what already ships (live verbs exist);
+  purely TUI work.
