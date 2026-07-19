@@ -19,13 +19,18 @@ helixgen-tui — key bindings
     ?        Show this help
     q        Quit
     escape   Close a modal / clear a filter
+    /        Fuzzy-filter by name (Library, Setlists, IRs)
+
+    In a filter, enter jumps to the best match — it never
+    activates, syncs, pushes, or deletes. Matched characters
+    are highlighted; best matches sort first.
 
   Library
     enter    Open the tone param editor
     a        Make active (installs first if local-only)
     s        Sync tone to device
     r        Refresh
-    /        Fuzzy-filter by name
+    /        Filter tones (enter jumps to the best match)
 
   Tone editor
     up/down  Move selection in the focused pane
@@ -51,6 +56,10 @@ helixgen-tui — key bindings
     S        Sync selected setlist
     A        Sync all setlists
     r        Refresh
+    /        Filter setlists (enter jumps to the best match)
+
+    The add-tone picker filters as you type; enter adds the
+    best match.
 
   IRs
     p        Push selected local IR to device
@@ -58,6 +67,8 @@ helixgen-tui — key bindings
     d        Delete device IR
     P        Prune device IRs
     r        Refresh
+    /        Filter the focused pane (enter jumps to the
+             best match)
 
   Device
     b        Backup

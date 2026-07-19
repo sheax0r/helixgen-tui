@@ -35,12 +35,20 @@ tabbed shell:
 
 | Tab | Key | What it does |
 |---|---|---|
-| Library | `1` | Browse tones, view details, filter, make a tone active, sync it to the device |
-| Setlists | `2` | Manage setlist membership and order, sync a setlist or all setlists |
-| IRs | `3` | Push local IRs to the device, rename/delete/prune device IRs |
+| Library | `1` | Browse tones, view details, filter (`/`), make a tone active, sync it to the device |
+| Setlists | `2` | Manage setlist membership and order, filter (`/`), sync a setlist or all setlists |
+| IRs | `3` | Push local IRs to the device, filter (`/`), rename/delete/prune device IRs |
 | Device | `4` | Device info, active tone, backup/restore, lock status, retry connect |
 
 Press `?` anywhere for the full key-binding reference, `q` to quit.
+
+**Fuzzy filter:** `/` opens a filter on the Library, Setlists, and IRs screens
+(on IRs it applies to whichever pane has focus). Type part of a name — matching
+is an ordered subsequence, so `jcm` finds "JCM800 Crunch"; matches sort
+best-first and the matched characters are highlighted. `enter` in a filter jumps
+the cursor to the best match and never mutates anything (activate, sync, push,
+delete stay on their own keys); `escape` clears the filter. The add-tone picker
+in Setlists filters the same way, where `enter` adds the best match.
 
 **Tone editor:** press `enter` on a Library tone to open its signal chain. The
 chain renders left-to-right — an input node, the blocks (both DSP paths stacked

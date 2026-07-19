@@ -542,17 +542,21 @@ async def test_ir_filter_clears_on_escape():
 
 ### Task 6: User-facing surfaces + backlog bookkeeping
 
-- [ ] Update `src/helixgen_tui/widgets/help_overlay.py`. It currently says
+- [x] Update `src/helixgen_tui/widgets/help_overlay.py`. It currently says
       `/  Fuzzy-filter by name` (L28) under Library only. Make the `/` filter hint
       apply to every screen that now has one (Library, Setlists, IRs) and mention that
       Enter jumps to / acts on the best match. Keep the wording terse and consistent
       with the surrounding entries.
-- [ ] Update `README.md` key/tab tables so `/` is listed for the Setlists and IRs
+- [x] Update `README.md` key/tab tables so `/` is listed for the Setlists and IRs
       screens, and the add-tone modal's filter is mentioned.
-- [ ] Verify the key-hints footer (`src/helixgen_tui/widgets/status_footer.py`) shows
-      the new `/` binding on Setlists and IRs — the bindings added in Tasks 3 and 5
-      should surface automatically; if not, wire them.
-- [ ] Update `docs/BACKLOG.md`:
+- [x] Verify the key-hints footer shows the new `/` binding on Setlists and IRs.
+      **Finding:** the key hints come from Textual's `Footer` (composed in
+      `screens/base.py`), not `status_footer.py` (device state + last action only).
+      The Task 3/5 bindings carry no `show=False`, so they surface automatically —
+      no wiring needed. Locked in by a new regression test,
+      `test_filter_binding_is_advertised_on_every_filtered_screen` in
+      `tests/test_key_hints.py`.
+- [x] Update `docs/BACKLOG.md`:
   - Mark **#10** resolved: all four surfaces filtered, scored ranking, matched-character
     highlighting, enter-to-act. Note the date (2026-07-19) and this plan.
   - Update **#8(d)** — it says "the library filter matches name only ... the pickers/panes
@@ -561,8 +565,11 @@ async def test_ir_filter_clears_on_escape():
     (guitar / description / pack), (b) `BlockPickerModal` fuzzy filter — reuse
     `FilterableTableMixin`, (c) optional shared `ModalScreen` base, since `AddToneModal`
     and `BlockPickerModal` carry near-identical `DEFAULT_CSS`.
-- [ ] Run the full validation set (below) and confirm green.
-- [ ] Commit: `docs: record fuzzy-search rollout, close #10, file follow-ups`
+      **Shipped as entries #18 (multi-field match), #19 (`BlockPickerModal`
+      filter), #20 (shared picker `ModalScreen` base).**
+- [x] Run the full validation set (below) and confirm green. (`uv run pytest`
+      238 passed before the new footer test, 239 after; `uv run ruff check .` clean.)
+- [x] Commit: `docs: record fuzzy-search rollout, close #10, file follow-ups`
 
 ## Validation Commands
 
