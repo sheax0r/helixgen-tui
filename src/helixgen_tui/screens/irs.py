@@ -19,24 +19,27 @@ touches a widget or kicks off another device call hops back via
 
 from __future__ import annotations
 
+from typing import Callable, Sequence
+
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable, Input, Static
 
 from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import IrVM, MutationPlan, OpResult
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.filterable import FilterableTableMixin
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _LOCAL_TABLE_ID = "irs-local-table"
 _DEVICE_TABLE_ID = "irs-device-table"
 _DEVICE_PLACEHOLDER_ID = "irs-device-placeholder"
 _RENAME_INPUT_ID = "irs-rename-input"
+_FILTER_ID = "irs-filter"
 
 _DEVICE_PLACEHOLDER_TEXT = "unavailable — device offline"
 
@@ -83,6 +86,57 @@ class PruneIrsPlanReady(Message):
         super().__init__()
 
 
+class _IrPane(FilterableTableMixin):
+    """One filterable IR pane.
+
+    ``FilterableTableMixin`` wires one Input to one DataTable, and this screen
+    has two tables sharing a single filter — so each pane gets its own small
+    host that delegates widget lookup back to the screen. ``active`` is the
+    focused-pane flag: an inactive pane reports an empty query, which is what
+    restores it to native order when focus moves to the other side.
+    """
+
+    def __init__(
+        self, screen: LibrarianScreen, table_id: str, items: Callable[[], list[IrVM]]
+    ) -> None:
+        self._screen = screen
+        self._items = items
+        self.filter_input_id = _FILTER_ID
+        self.filter_table_id = table_id
+        self.active = False
+        # Row keys stay positional (IR display names routinely duplicate, and
+        # DataTable rejects a repeated key) but nothing derives a backing index
+        # from them any more — selection resolves through the mixin's _visible.
+        self._keys: dict[int, str] = {}
+        super().__init__()
+
+    def query_one(self, selector, expect_type=None):  # type: ignore[no-untyped-def]
+        return self._screen.query_one(selector, expect_type)
+
+    def filter_query(self) -> str:
+        return super().filter_query() if self.active else ""
+
+    def filter_items(self) -> Sequence[IrVM]:
+        items = self._items()
+        self._keys = {id(ir): str(position) for position, ir in enumerate(items)}
+        return items
+
+    def filter_text(self, item: IrVM) -> str:
+        return item.name
+
+    def filter_row(self, item: IrVM, label: Text) -> tuple[object, ...]:
+        return (label, Text(item.pack or ""), _short_hash(item.irhash))
+
+    def filter_row_key(self, item: IrVM) -> str | None:
+        return self._keys.get(id(item))
+
+    def filter_on_enter(self, item: IrVM) -> None:
+        """Enter in the filter parks the cursor on the best match and stops
+        there. Push/delete/rename/prune stay on ``p``/``d``/``R``/``P``: no
+        device write is ever a side effect of searching."""
+        self.move_cursor_to(item)
+
+
 class IrsScreen(LibrarianScreen):
     """IRs-mode screen: local IR library (left) vs. device IRs (right)."""
 
@@ -95,6 +149,7 @@ class IrsScreen(LibrarianScreen):
         Binding("R", "rename_ir", "Rename"),
         Binding("d", "delete_ir", "Delete"),
         Binding("P", "prune_irs", "Prune"),
+        Binding("slash", "focus_filter", "Filter", key_display="/"),
         Binding("escape", "cancel_rename", "Cancel", show=False),
     ]
 
@@ -103,8 +158,12 @@ class IrsScreen(LibrarianScreen):
         self._local_irs: list[IrVM] = []
         self._device_irs: list[IrVM] = []
         self._renaming_ir: str | None = None
+        self._local_pane = _IrPane(self, _LOCAL_TABLE_ID, lambda: self._local_irs)
+        self._device_pane = _IrPane(self, _DEVICE_TABLE_ID, lambda: self._device_irs)
+        self._local_pane.active = True
 
     def body(self) -> ComposeResult:
+        yield Input(placeholder="filter", id=_FILTER_ID)
         with Horizontal():
             with Vertical():
                 yield Static("Local IRs")
@@ -132,17 +191,7 @@ class IrsScreen(LibrarianScreen):
         """Re-read the local IR list from core. A plain sync method (not a
         worker) — local reads are cheap, matching LibraryScreen.refresh_tones."""
         self._local_irs = self.app.core.list_local_irs()
-        table = self.query_one(f"#{_LOCAL_TABLE_ID}", DataTable)
-        prev_key = self._capture_cursor_key(table)
-        table.clear()
-        # Row keys are list indices, not names: real libraries routinely hold
-        # many IRs sharing one display name (mic/distance variants), and
-        # DataTable raises DuplicateKey on a repeated key.
-        for index, ir in enumerate(self._local_irs):
-            table.add_row(
-                Text(ir.name), Text(ir.pack or ""), _short_hash(ir.irhash), key=str(index)
-            )
-        self._restore_cursor_key(table, prev_key)
+        self._local_pane.rebuild_filtered()
 
     def action_refresh(self) -> None:
         """`r`: re-read the local pane and re-query the device pane (matching
@@ -158,11 +207,45 @@ class IrsScreen(LibrarianScreen):
         self.request_device_refresh()
 
     def _selected_local_ir(self) -> IrVM | None:
-        table = self.query_one(f"#{_LOCAL_TABLE_ID}", DataTable)
-        if table.row_count == 0:
-            return None
-        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        return self._local_irs[int(row_key.value)]
+        """Resolved through the pane's visible list, never by mapping a row key
+        back into ``_local_irs`` — a filtered pane's rows no longer line up with
+        backing-list positions."""
+        return self._local_pane.selected()
+
+    # -- the shared filter (applies to whichever pane holds focus) ----------
+
+    def action_focus_filter(self) -> None:
+        self.query_one(f"#{_FILTER_ID}", Input).focus()
+
+    def _rebuild_panes(self) -> None:
+        self._local_pane.rebuild_filtered()
+        if self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable).display:
+            self._device_pane.rebuild_filtered()
+
+    @on(Input.Changed, f"#{_FILTER_ID}")
+    def _on_filter_changed(self, event: Input.Changed) -> None:
+        self._rebuild_panes()
+
+    @on(Input.Submitted, f"#{_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self._active_pane().handle_filter_submitted()
+
+    def _active_pane(self) -> _IrPane:
+        return self._device_pane if self._device_pane.active else self._local_pane
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Focusing a pane hands it the filter: the query re-applies to the
+        newly focused table and the other one falls back to native order.
+        Focusing the filter Input itself changes nothing — the pane the user
+        came from stays the target."""
+        pane = {_LOCAL_TABLE_ID: self._local_pane, _DEVICE_TABLE_ID: self._device_pane}.get(
+            event.widget.id or ""
+        )
+        if pane is None or pane.active:
+            return
+        self._local_pane.active = pane is self._local_pane
+        self._device_pane.active = pane is self._device_pane
+        self._rebuild_panes()
 
     # -- device pane (async: DeviceService.query, never a direct port call) --
 
@@ -195,27 +278,18 @@ class IrsScreen(LibrarianScreen):
         placeholder = self.query_one(f"#{_DEVICE_PLACEHOLDER_ID}", Static)
         if not result.ok or result.value is None:
             self._device_irs = []
-            table.clear()
+            self._device_pane.rebuild_filtered()
             table.display = False
             placeholder.display = True
             return
-        prev_key = self._capture_cursor_key(table)
         self._device_irs = list(result.value)  # type: ignore[arg-type]
-        table.clear()
-        for index, ir in enumerate(self._device_irs):
-            table.add_row(
-                Text(ir.name), Text(ir.pack or ""), _short_hash(ir.irhash), key=str(index)
-            )
+        self._device_pane.rebuild_filtered()
         table.display = True
         placeholder.display = False
-        self._restore_cursor_key(table, prev_key)
 
     def _selected_device_ir(self) -> IrVM | None:
-        table = self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable)
-        if table.row_count == 0:
-            return None
-        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        return self._device_irs[int(row_key.value)]
+        """Resolved through the pane's visible list — see _selected_local_ir."""
+        return self._device_pane.selected()
 
     # -- offline guard is inherited from LibrarianScreen._offline ----------
 
@@ -328,6 +402,12 @@ class IrsScreen(LibrarianScreen):
         rename_input.focus()
 
     def action_cancel_rename(self) -> None:
+        """Escape unwinds one step at a time: drop a live filter query first,
+        and only then cancel an open rename prompt."""
+        filter_input = self.query_one(f"#{_FILTER_ID}", Input)
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> rebuild
+            return
         rename_input = self.query_one(f"#{_RENAME_INPUT_ID}", Input)
         if not rename_input.display:
             return

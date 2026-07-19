@@ -485,7 +485,7 @@ L111) and device (id `irs-device-table`, L114). Both currently key rows by
 stored indices point at the wrong IR. Note the existing rename `Input` (id
 `irs-rename-input`, L116, hidden by default L124) is NOT the filter; do not reuse it.
 
-- [ ] Write the failing tests first in `tests/screens/test_irs.py`:
+- [x] Write the failing tests first in `tests/screens/test_irs.py`:
 
 ```python
 async def test_ir_filter_narrows_the_focused_pane_only():
@@ -517,8 +517,8 @@ async def test_ir_filter_clears_on_escape():
     """Escape clears a non-empty filter and restores the full pane."""
 ```
 
-- [ ] Run to confirm they fail: `uv run pytest tests/screens/test_irs.py -v`
-- [ ] Implement:
+- [x] Run to confirm they fail: `uv run pytest tests/screens/test_irs.py -v`
+- [x] Implement:
   - Add a single `Input` (id `irs-filter`), placed above the two panes. `/` focuses it
     (`Binding("slash", "focus_filter", "Filter", key_display="/")`); `escape` clears it.
     Note `escape` is already bound to `cancel_rename` (L99) — the handler must clear the
@@ -536,9 +536,9 @@ async def test_ir_filter_clears_on_escape():
     `DataTable`'s own uniqueness needs, but nothing may compute a backing index from them.
   - `filter_on_enter(ir)` moves the cursor to that IR only. `p` / `d` / `R` / `P` stay
     explicit keys — Enter must never mutate local or device state.
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/screens/test_irs.py -v`
-- [ ] Run the full suite: `uv run pytest`
-- [ ] Commit: `feat: fuzzy filter on the IR panes, drop positional index lookups (#10)`
+- [x] Run the tests and confirm they pass: `uv run pytest tests/screens/test_irs.py -v`
+- [x] Run the full suite: `uv run pytest`
+- [x] Commit: `feat: fuzzy filter on the IR panes, drop positional index lookups (#10)`
 
 ### Task 6: User-facing surfaces + backlog bookkeeping
 
