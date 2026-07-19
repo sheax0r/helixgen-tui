@@ -54,7 +54,7 @@ activate/sync/push/delete (see Task 2 and Task 5).
 
 Pure module. No Textual import, no Rich import. Unit-tested in isolation.
 
-- [ ] Write the failing tests first in a new `tests/test_fuzzy.py` (top-level peer of
+- [x] Write the failing tests first in a new `tests/test_fuzzy.py` (top-level peer of
       `tests/test_shell.py`). Assert **ordering properties and behavior, never absolute
       score numbers** — the weights are an implementation detail and hard-coding them
       makes the tests brittle. Cover:
@@ -126,9 +126,15 @@ def test_full_string_match_scores_highest_of_its_query():
     assert exact.score > embedded.score
 ```
 
-- [ ] Run it to confirm it fails for the expected reason:
+- [x] Run it to confirm it fails for the expected reason:
       `uv run pytest tests/test_fuzzy.py -v` → `ModuleNotFoundError: No module named 'helixgen_tui.fuzzy'`
-- [ ] Implement the minimal module. Shape:
+- [x] Implement the minimal module. Shape below. **Deviation:** the greedy
+      left-to-right walk sketched here cannot satisfy
+      `test_word_boundary_outranks_mid_token` — greedy alignment picks the same
+      indices `(1, 5)` for both "Crunch Rhythm" and "Crunchrhythm", so no
+      weighting can separate them. Shipped version keeps the same public API
+      (`Match`, `match`) and weights, but searches for the best-scoring
+      alignment via a memoised recursion instead of the first one.
 
 ```python
 """Scored fuzzy matching for list filtering.
@@ -205,11 +211,11 @@ def match(query: str, text: str) -> Match | None:
     return Match(score=score, indices=tuple(indices))
 ```
 
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/test_fuzzy.py -v`.
+- [x] Run the tests and confirm they pass: `uv run pytest tests/test_fuzzy.py -v`.
       If a specific ordering test fails, adjust the **weights** (not the test) until
       all ordering properties hold together — that's the point of asserting order.
-- [ ] Run `uv run ruff check .` and confirm clean.
-- [ ] Commit: `feat: add scored fuzzy matcher (#10)`
+- [x] Run `uv run ruff check .` and confirm clean.
+- [x] Commit: `feat: add scored fuzzy matcher (#10)`
 
 ### Task 2: `FilterableTableMixin` + adopt it on the Library screen
 
