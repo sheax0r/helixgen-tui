@@ -43,7 +43,7 @@ before any code.
     manifest only; a read-back of what's actually mirrored on the device is
     future work.
   - **Sortable tone list** — the Library table renders in library order with a
-    substring filter; column sorting isn't wired.
+    subsequence fuzzy filter; column sorting isn't wired.
   - **Detail-view variants + normalized telemetry** — `ToneDetailModal` shows
     name/guitar/setlists/description; per-guitar variants and normalized
     loudness/telemetry from the tone meta aren't surfaced.
@@ -54,10 +54,15 @@ before any code.
 
 - **#8 Cosmetic minors from the final review (2026-07-17)** — (a) modal
   dismissal fires `ScreenResume`, rebuilding tables and resetting DataTable
-  cursors to row 0 (flows unaffected; selection captured pre-modal);
+  cursors to row 0 — **RESOLVED 2026-07-18** (tui-polish plan, Task 1):
+  `_capture_cursor_key`/`_restore_cursor_key` in `screens/base.py` hold the
+  cursor across the rebuild on all three list screens (setlists tones pane
+  preserved only across same-setlist rebuilds);
   (b) device screen `r` retry needs a second press after reconnect under the
   production spawn (probe async, info refresh immediate); (c) format_device_text
-  substring heuristic is fragile; (d) library filter matches name only.
+  substring heuristic is fragile; (d) library filter matches name only (the
+  match is now subsequence fuzzy, but still name-only; the pickers/panes have
+  no filter — see #10).
 
 ## 9. v0.1.1 residuals (from PR #14 review)
 
@@ -81,9 +86,10 @@ before any code.
 Type part of a name to find/use the thing, wherever a list is presented:
 selecting a setlist, picking a tone in the add-tone modal, the library tone
 list, local/device IR panes. Today only the Library screen has a filter
-(`/`), it matches name-substring only (see #8), and the pickers/panes have
-none. Wants: incremental fuzzy matching (subsequence or trigram), highlight
-of matches, and enter-to-act on the top hit.
+(`/`), it now matches a name-subsequence fuzzy filter (upgraded 2026-07-18,
+tui-polish plan Task 2; see #8), and the pickers/panes have none. Remaining
+wants: subsequence/trigram matching on the setlist / add-tone / IR panes too,
+highlight of matches, and enter-to-act on the top hit.
 
 ## 11. Key-hints footer polish (from PR #16 review)
 
