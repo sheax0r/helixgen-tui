@@ -28,7 +28,9 @@ def capture_cursor_key(table: DataTable) -> str | None:
 
     Captured before a ``clear()``/rebuild so the cursor can be restored to the
     same row afterward — a ScreenResume rebuild would otherwise snap it back to
-    row 0 (cosmetic noise; #8a)."""
+    row 0 (cosmetic noise; #8a). Only for tables whose keys are real identities
+    (the setlist tones pane, keyed by ``tone_id``); the mixin itself restores by
+    item, because its own keys may be positional."""
     if table.row_count == 0:
         return None
     return table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key.value
@@ -107,9 +109,15 @@ class FilterableTableMixin:
         return self.query_one(f"#{self.filter_table_id}", DataTable)
 
     def rebuild_filtered(self) -> None:
-        """Filter, rank, highlight, rebuild the table, preserve the cursor."""
+        """Filter, rank, highlight, rebuild the table, place the cursor.
+
+        With a query the cursor lands on the top hit: it is what Enter acts on,
+        so anything else would highlight one row and commit another. With no
+        query the cursor follows the item it was on, by identity through
+        ``_visible`` — never by row key, which is positional on the IR panes and
+        would name a different IR after the backing list changes."""
         table = self.filter_table()
-        previous_key = capture_cursor_key(table)
+        previous_item = self.selected()
         query = self.filter_query()
 
         scored: list[tuple[int, int, Any, tuple[int, ...]]] = []
@@ -123,8 +131,8 @@ class FilterableTableMixin:
         # An empty query scores every item 0, so this reproduces native order.
         scored.sort(key=lambda row: (-row[0], row[1]))
 
-        table.clear()
         self._visible = []
+        table.clear()
         for _score, position, item, indices in scored:
             label = Text(self.filter_text(item))
             for index in indices:
@@ -133,7 +141,12 @@ class FilterableTableMixin:
             table.add_row(*self.filter_row(item, label), key=key)
             self._visible.append(item)
 
-        restore_cursor_key(table, previous_key)
+        if query:
+            table.move_cursor(row=0)
+        elif previous_item is not None:
+            # No-op when the item is gone (deleted, or filtered out by another
+            # pane's rebuild) — the cursor then stays at row 0.
+            self.move_cursor_to(previous_item)
 
     def selected(self) -> Any | None:
         """The item under the cursor, resolved through the visible list."""
@@ -152,14 +165,13 @@ class FilterableTableMixin:
         self.filter_table().move_cursor(row=index)
 
     def handle_filter_submitted(self) -> None:
-        """Enter in the filter input: act on the top-ranked hit, if any.
+        """Enter in the filter input: act on the row under the cursor, if any.
 
-        With no query there is no "top hit" — row 0 is just whatever sorts first
-        natively — so fall back to the row under the cursor. That keeps Enter on
-        an untouched filter from committing an arbitrary item in a picker."""
-        if not self._visible:
-            return
-        item = self._visible[0] if self.filter_query() else self.selected()
+        Always the cursor row, never ``_visible[0]`` directly: a query parks the
+        cursor on the top hit in ``rebuild_filtered``, so the two agree there,
+        and where they could diverge (the user moved the cursor) what the user
+        sees highlighted is what Enter acts on."""
+        item = self.selected()
         if item is None:
             return
         self.filter_on_enter(item)

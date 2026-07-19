@@ -24,7 +24,11 @@ _CONTIGUOUS_BONUS = 8
 _BOUNDARY_BONUS = 6
 _PREFIX_BONUS = 10
 _GAP_PENALTY = 2
-_MAX_POSITION_PENALTY = 20
+# Deliberately small next to the bonuses above: a start penalty on their scale
+# cancels them out, so "rh" would rank the scattered "Rich Harmony" over the
+# word-boundary hit in "Crunch Rhythm" — the exact case this module exists for.
+# It breaks near-ties toward earlier matches; it does not outweigh a real hit.
+_MAX_POSITION_PENALTY = 3
 
 
 def _lower(text: str) -> str:

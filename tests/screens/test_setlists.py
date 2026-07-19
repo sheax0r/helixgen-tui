@@ -548,17 +548,20 @@ async def test_setlist_filter_empty_restores_all():
 
 
 async def test_enter_on_setlist_filter_moves_cursor_to_top_hit():
-    """Enter moves the left-pane cursor to the top hit; the right-hand tones
-    pane rebuilds for that setlist (RowHighlighted fires as usual)."""
+    """Enter acts on the top hit; the right-hand tones pane rebuilds for that
+    setlist (RowHighlighted fires as usual). Filtering already parked the cursor
+    on the top hit — Enter must never act on a row other than the highlighted
+    one, so this asserts the two agree rather than that Enter moves anything."""
     app = _app(setlists=list(_FUZZY_SETLISTS))
     async with app.run_test() as pilot:
         await _goto_setlists(pilot)
         await _type_setlist_filter(pilot, "jcm")
 
         left = app.screen.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
-        # the cursor was restored to the previously-cursored "Jazz Chorus Mod",
-        # which the ranking pushed down to row 1
-        assert left.cursor_row == 1
+        # filtering re-ranked "JCM800 Crunch" to the top and took the cursor
+        # with it, off the previously-cursored "Jazz Chorus Mod" (now row 1)
+        assert left.cursor_row == 0
+        assert app.screen._selected_setlist().name == "JCM800 Crunch"
 
         await pilot.press("enter")
         await pilot.pause()
@@ -698,6 +701,11 @@ async def test_add_tone_modal_enter_adds_top_hit():
         for char in "jcm":
             await pilot.press(char)
         await pilot.pause()
+
+        # The pre-filter cursor row ("Jazz Chorus Mod") still matches but ranks
+        # second — the cursor must follow the ranking, or the picker highlights
+        # one tone and adds another.
+        assert app.screen.query_one(DataTable).cursor_row == 0
 
         await pilot.press("enter")
         await pilot.pause()

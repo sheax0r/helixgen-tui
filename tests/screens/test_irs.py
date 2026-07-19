@@ -665,9 +665,11 @@ async def test_escape_returns_focus_to_the_pane_after_clearing_the_filter():
         assert app.screen.query_one("#irs-local-table", DataTable).has_focus
 
 
-async def test_escape_drops_the_filter_before_cancelling_an_open_rename():
-    """Precedence, both states live at once: first escape clears the query and
-    leaves the rename prompt open; the second cancels the rename."""
+async def test_escape_cancels_an_open_rename_before_dropping_the_filter():
+    """Precedence, both states live at once: escape unwinds innermost-first, so
+    the first cancels the rename prompt and the second clears the query. The
+    other order would leave the rename Input visible but unfocused, with the
+    filter gone and keystrokes driving the table underneath it."""
     app, port = _app()
     async with app.run_test() as pilot:
         await _open_irs(pilot, "#irs-device-table")
@@ -683,12 +685,12 @@ async def test_escape_drops_the_filter_before_cancelling_an_open_rename():
 
         await pilot.press("escape")
         await pilot.pause()
-        assert filter_input.value == ""
-        assert rename_input.display is True
+        assert rename_input.display is False
+        assert filter_input.value == "v30"
 
         await pilot.press("escape")
         await pilot.pause()
-        assert rename_input.display is False
+        assert filter_input.value == ""
         assert port.calls == []
 
 
@@ -701,3 +703,23 @@ async def test_enter_on_an_empty_ir_filter_does_not_mutate():
         await pilot.press("enter")
         await pilot.pause()
         assert port.calls == []
+
+
+async def test_local_cursor_follows_the_ir_across_a_refresh_that_drops_an_earlier_one():
+    """The IR panes' row keys are positional, so restoring the cursor by key
+    would park it on whatever IR now occupies the old index. It has to follow
+    the item: removing an IR above the cursor must leave the same IR selected."""
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        local_table.move_cursor(row=2)
+        await pilot.pause()
+        assert app.screen._selected_local_ir().name == "JCM800 Cab"
+
+        # drop "Greenback" (row 0): every later IR shifts up one position
+        app.core.local_irs = [ir for ir in _FILTER_LOCAL_IRS if ir.name != "Greenback"]
+        app.screen.refresh_local_irs()
+        await pilot.pause()
+
+        assert app.screen._selected_local_ir().name == "JCM800 Cab"

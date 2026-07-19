@@ -122,3 +122,14 @@ def test_indices_align_with_original_text_when_lowercasing_grows():
     assert result is not None
     assert result.indices == (9, 10, 11)
     assert "".join("İstanbul Cab"[i] for i in result.indices) == "Cab"
+
+
+def test_late_boundary_hit_beats_a_scattered_early_one():
+    """The case the best-alignment search exists for: "rh" must find the
+    word-boundary "Rh" of "Crunch Rhythm" and rank it over the scattered
+    r...h of "Rich Harmony". A start penalty on the same scale as the
+    bonuses would cancel them out and invert this."""
+    boundary = match("rh", "Crunch Rhythm")
+    scattered = match("rh", "Rich Harmony")
+    assert boundary is not None and scattered is not None
+    assert boundary.score > scattered.score

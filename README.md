@@ -47,12 +47,13 @@ Press `?` anywhere for the full key-binding reference, `q` to quit.
 the newly focused pane gets ranked and the other returns to its native order).
 Type part of a name — matching is an ordered subsequence, so `jcm` finds
 "JCM800 Crunch"; matches sort best-first and the matched characters are
-highlighted. `enter` in a filter jumps the cursor to the best match and never
-mutates anything (activate, sync, push, delete stay on their own keys); with no
-query typed it just follows the cursor. `escape` clears the filter, and on IRs
-it unwinds one step at a time — a live query goes first, so cancelling an open
-rename while filtering takes a second `escape`. The add-tone picker in Setlists
-filters the same way, where `enter` adds the best match.
+highlighted, and the cursor rides the top hit as you type. `enter` in a filter
+acts on the highlighted row — the best match — and never mutates anything
+(activate, sync, push, delete stay on their own keys). `escape` clears the
+filter, and on IRs it unwinds one step at a time, innermost first — an open
+rename prompt goes before a live query, so a filter typed before renaming takes
+a second `escape`. The add-tone picker in Setlists filters the same way, where
+`enter` adds the highlighted match.
 
 **Tone editor:** press `enter` on a Library tone to open its signal chain. The
 chain renders left-to-right — an input node, the blocks (both DSP paths stacked

@@ -404,21 +404,24 @@ class IrsScreen(LibrarianScreen):
         rename_input.focus()
 
     def action_cancel_rename(self) -> None:
-        """Escape unwinds one step at a time: drop a live filter query first,
-        and only then cancel an open rename prompt."""
-        filter_input = self.query_one(f"#{_FILTER_ID}", Input)
-        if filter_input.value:
-            filter_input.value = ""  # triggers Input.Changed -> rebuild
-            # Return focus to the pane the filter was targeting, so p/d/R/P act
-            # instead of typing into the input (matching Library and Setlists).
-            self.query_one(f"#{self._active_pane().filter_table_id}", DataTable).focus()
-            return
+        """Escape unwinds one step at a time, innermost state first: an open
+        rename prompt, then a live filter query. Rename comes first because it
+        is the more modal of the two — unwinding the filter first would clear
+        the query and move focus to a pane table while the rename Input stayed
+        visible and orphaned, with keystrokes now driving the table."""
         rename_input = self.query_one(f"#{_RENAME_INPUT_ID}", Input)
-        if not rename_input.display:
+        if rename_input.display:
+            rename_input.display = False
+            self._renaming_ir = None
+            self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable).focus()
             return
-        rename_input.display = False
-        self._renaming_ir = None
-        self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable).focus()
+        filter_input = self.query_one(f"#{_FILTER_ID}", Input)
+        if not filter_input.value:
+            return
+        filter_input.value = ""  # triggers Input.Changed -> rebuild
+        # Return focus to the pane the filter was targeting, so p/d/R/P act
+        # instead of typing into the input (matching Library and Setlists).
+        self.query_one(f"#{self._active_pane().filter_table_id}", DataTable).focus()
 
     @on(Input.Submitted, f"#{_RENAME_INPUT_ID}")
     def _on_rename_submitted(self, event: Input.Submitted) -> None:
