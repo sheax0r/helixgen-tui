@@ -133,3 +133,21 @@ def test_late_boundary_hit_beats_a_scattered_early_one():
     scattered = match("rh", "Rich Harmony")
     assert boundary is not None and scattered is not None
     assert boundary.score > scattered.score
+
+
+def test_long_name_prefix_match_beats_a_scattered_hit_in_a_shorter_name():
+    """The unmatched-tail penalty is a tie-break, not a verdict on match
+    quality. Unclamped it was linear in name length while every bonus is
+    bounded, so a literal prefix hit lost to a scattered one purely because
+    Helix names are long and descriptive."""
+    prefix = match("acou", "Acoustic Simulator Bright Strat Neck")
+    scattered = match("acou", "A Country Outlaw Twang")
+    assert prefix is not None and scattered is not None
+    assert prefix.score > scattered.score
+
+
+def test_tail_penalty_does_not_invert_a_word_boundary_hit():
+    prefix = match("marsh", "Marshall JCM800")
+    split = match("marsh", "Mars Hall")
+    assert prefix is not None and split is not None
+    assert prefix.score > split.score

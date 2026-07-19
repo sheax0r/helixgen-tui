@@ -101,6 +101,11 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
     def filter_row_key(self, item: ToneVM, position: int) -> str:
         return item.tone_id
 
+    def filter_identity(self, item: ToneVM) -> str:
+        """``tone_id``, not the ToneVM: `s` flips ``sync``, so value equality
+        would lose the cursor on the very rebuild that follows a sync."""
+        return item.tone_id
+
     def action_refresh(self) -> None:
         self.refresh_tones()
 
@@ -114,7 +119,12 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
         self.query_one(f"#{_FILTER_ID}", Input).focus()
 
     def action_clear_filter(self) -> None:
+        """Escape drops a live query and returns to the table. With no query
+        there is nothing to unwind, matching Setlists and IRs — escape unwinds
+        one step at a time and does nothing when there is no step to take."""
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
+        if not filter_input.value:
+            return
         filter_input.value = ""  # triggers Input.Changed -> _on_filter_changed -> rebuild
         self.query_one(f"#{_TABLE_ID}", DataTable).focus()
 

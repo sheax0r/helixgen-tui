@@ -251,6 +251,13 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
     def filter_row_key(self, item: SetlistVM, position: int) -> str:
         return item.name
 
+    def filter_identity(self, item: SetlistVM) -> str:
+        """The name, not the SetlistVM: `a`/`d`/`J`/`K` rewrite ``tones`` and a
+        sync flips ``sync_enabled``, either of which would break value
+        equality and drop the cursor — so `S` could then sync a setlist the
+        user never selected."""
+        return item.name
+
     def action_focus_filter(self) -> None:
         self.query_one(f"#{_FILTER_ID}", Input).focus()
 

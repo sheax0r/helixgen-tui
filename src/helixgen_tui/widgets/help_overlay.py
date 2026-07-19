@@ -69,8 +69,8 @@ helixgen-tui — key bindings
     r        Refresh
     /        Filter the focused pane (enter jumps to the
              best match)
-    escape   Clear a live filter first, then cancel a
-             rename
+    escape   Cancel a rename first, then clear a live
+             filter
 
   Device
     b        Backup

@@ -633,3 +633,60 @@ async def test_enter_on_an_empty_filter_does_not_activate():
         await pilot.pause()
         assert port.calls == []
         assert isinstance(app.screen, LibraryScreen)
+
+
+async def test_refresh_while_filtered_keeps_the_cursor_where_the_user_parked_it():
+    """A rebuild the user did not trigger by typing must not re-target the
+    selection to the top hit — the next `s`/`a` would then act on a row they
+    never chose."""
+    core = _core()
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        await pilot.press("e")  # matches more than one tone
+        assert table.row_count > 1
+
+        table.focus()
+        await pilot.press("down")
+        parked = table.cursor_row
+        assert parked != 0
+        parked_name = str(table.get_cell_at(Coordinate(parked, 0)))
+
+        await pilot.press("r")  # refresh: a rebuild that is not a query change
+        assert table.cursor_row == parked
+        assert str(table.get_cell_at(Coordinate(table.cursor_row, 0))) == parked_name
+
+
+async def test_cursor_survives_a_sync_state_flip_under_a_live_filter():
+    """The cursor is restored by tone_id, not by ToneVM value equality: a sync
+    rewrites the item under the cursor, and equality would silently drop the
+    selection to row 0."""
+    core = _core()
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        await pilot.press("e")
+        table.focus()
+        await pilot.press("down")
+        parked = table.cursor_row
+        selected = app.screen.selected()
+        assert selected is not None
+
+        # Same tone, different sync state — what a completed sync produces.
+        core.library.tones = [
+            ToneVM(
+                name=tone.name,
+                tone_id=tone.tone_id,
+                guitar=tone.guitar,
+                description=tone.description,
+                sync=SyncState.SYNCED,
+                setlists=tone.setlists,
+            )
+            for tone in core.library.tones
+        ]
+        app.screen.refresh_tones()
+
+        assert table.cursor_row == parked
+        assert app.screen.selected().tone_id == selected.tone_id

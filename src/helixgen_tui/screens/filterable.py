@@ -65,6 +65,9 @@ class FilterableTableMixin:
         hosts whose items carry no natural identifier
       - ``filter_on_enter(item) -> None``     primary action on the top hit
         (defaults to moving the cursor there)
+      - ``filter_identity(item) -> Any``      stable identity for restoring the
+        cursor across a rebuild; override whenever an item carries fields that
+        change under it (sync state, ``on_device``)
 
     Hosts also hook ``Input.Changed`` -> ``rebuild_filtered()`` and
     ``Input.Submitted`` -> ``handle_filter_submitted()``.
@@ -75,6 +78,10 @@ class FilterableTableMixin:
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._visible: list[Any] = []
+        # The query the last rebuild ran with, so a rebuild triggered by
+        # something other than typing (a refresh, a device mutation, a screen
+        # resume) can keep the cursor where the user left it.
+        self._last_query: str | None = None
         super().__init__(*args, **kwargs)
 
     # -- host hooks --------------------------------------------------------
@@ -90,6 +97,17 @@ class FilterableTableMixin:
 
     def filter_row_key(self, item: Any, position: int) -> str | None:
         raise NotImplementedError
+
+    def filter_identity(self, item: Any) -> Any:
+        """Stable identity used to find ``item`` again after a rebuild.
+
+        Defaults to the item itself, which is only correct while its fields
+        cannot change between rebuilds. Every host whose items carry live
+        status (a tone's sync state, an IR's ``on_device``) must override:
+        value equality would fail the moment that status flipped, silently
+        dropping the cursor to row 0 — and the next ``s``/``S``/``p``/``d``
+        would then act on whatever row that is."""
+        return item
 
     def filter_on_enter(self, item: Any) -> None:
         """Park the table cursor on ``item`` and stop there.
@@ -111,14 +129,23 @@ class FilterableTableMixin:
     def rebuild_filtered(self) -> None:
         """Filter, rank, highlight, rebuild the table, place the cursor.
 
-        With a query the cursor lands on the top hit: it is what Enter acts on,
-        so anything else would highlight one row and commit another. With no
-        query the cursor follows the item it was on, by identity through
-        ``_visible`` — never by row key, which is positional on the IR panes and
-        would name a different IR after the backing list changes."""
+        When the *query itself* changed the cursor lands on the top hit: it is
+        what Enter acts on, so anything else would highlight one row and commit
+        another. Otherwise the cursor follows the item it was on, by
+        ``filter_identity`` through ``_visible`` — never by row key, which is
+        positional on the IR panes and would name a different IR after the
+        backing list changes.
+
+        The query-changed test is what keeps a rebuild that the user did not
+        trigger by typing — a refresh, a completed device mutation, a screen
+        resume — from re-targeting a live filter's selection to the top hit
+        under them, which would point the next sync/push/delete at a row they
+        never chose."""
         table = self.filter_table()
         previous_item = self.selected()
         query = self.filter_query()
+        query_changed = query != self._last_query
+        self._last_query = query
 
         scored: list[tuple[int, int, Any, tuple[int, ...]]] = []
         for position, item in enumerate(self.filter_items()):
@@ -141,7 +168,7 @@ class FilterableTableMixin:
             table.add_row(*self.filter_row(item, label), key=key)
             self._visible.append(item)
 
-        if query:
+        if query and query_changed:
             table.move_cursor(row=0)
         elif previous_item is not None:
             # No-op when the item is gone (deleted, or filtered out by another
@@ -157,12 +184,15 @@ class FilterableTableMixin:
         return self._visible[row]
 
     def move_cursor_to(self, item: Any) -> None:
-        """Put the table cursor on ``item``'s row. No-op if it is not visible."""
-        try:
-            index = self._visible.index(item)
-        except ValueError:
-            return
-        self.filter_table().move_cursor(row=index)
+        """Put the table cursor on ``item``'s row. No-op if it is not visible.
+
+        Matched through ``filter_identity``, not value equality, so a row whose
+        status changed in the same rebuild is still found."""
+        target = self.filter_identity(item)
+        for index, candidate in enumerate(self._visible):
+            if self.filter_identity(candidate) == target:
+                self.filter_table().move_cursor(row=index)
+                return
 
     def handle_filter_submitted(self) -> None:
         """Enter in the filter input: act on the row under the cursor, if any.

@@ -127,6 +127,13 @@ class _IrPane(FilterableTableMixin):
         them — selection resolves through the mixin's ``_visible``."""
         return str(position)
 
+    def filter_identity(self, item: IrVM) -> tuple[str, str | None, str | None]:
+        """Everything but ``on_device``, which flips under the device pane the
+        moment a push lands — the rebuild that follows must not lose the
+        cursor, or the next `d` would target a different IR. Display names
+        duplicate, so the hash and pack are carried too."""
+        return (item.name, item.pack, item.irhash)
+
 
 class IrsScreen(LibrarianScreen):
     """IRs-mode screen: local IR library (left) vs. device IRs (right)."""

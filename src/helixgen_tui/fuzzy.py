@@ -29,6 +29,13 @@ _GAP_PENALTY = 2
 # word-boundary hit in "Crunch Rhythm" — the exact case this module exists for.
 # It breaks near-ties toward earlier matches; it does not outweigh a real hit.
 _MAX_POSITION_PENALTY = 3
+# Clamped for the same reason as the start penalty, and it matters more here:
+# the unmatched tail grows with the name, so an unclamped version is unbounded
+# while every bonus is bounded. Helix names are long and descriptive, so a
+# literal prefix hit in "Acoustic Simulator Bright Strat Neck" would lose to a
+# scattered one in "A Country Outlaw Twang" purely on length. Length is a
+# tie-break between comparable matches, never a verdict on match quality.
+_MAX_TAIL_PENALTY = 3
 
 
 def _lower(text: str) -> str:
@@ -118,6 +125,7 @@ def match(query: str, text: str) -> Match | None:
         return None
 
     # Prefer tighter matches: a query that consumes most of the text beats one
-    # buried in a long name.
-    tail_penalty = len(lowered_text) - len(lowered_query)
+    # buried in a long name. Clamped, so it separates otherwise-equal matches
+    # without letting name length overrule placement quality.
+    tail_penalty = min(len(lowered_text) - len(lowered_query), _MAX_TAIL_PENALTY)
     return Match(score=overall[0] - tail_penalty, indices=overall[1])
