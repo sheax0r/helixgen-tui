@@ -387,6 +387,50 @@ async def test_screen_resume_refreshes_device_pane():
         assert device_table.row_count == 2
 
 
+async def test_local_ir_selection_survives_screen_resume():
+    """#8a: the local-pane cursor must survive the on_screen_resume rebuild —
+    without capture-then-restore it would snap back to row 0."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 2
+        await pilot.press("down")  # row 1 = Greenback
+        assert local_table.cursor_row == 1
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        await pilot.press("3")  # back — on_screen_resume rebuilds the local pane
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.cursor_row == 1
+
+
+async def test_device_ir_selection_survives_screen_resume():
+    """#8a: the device-pane cursor must survive the on_screen_resume re-query —
+    _apply_device_irs rebuilds the table, so it captures/restores too."""
+    app, port = _app(
+        device_irs=[
+            IrVM(name="V30 Cab", pack=None, irhash="deadbeefcafef00d", on_device=True),
+            IrVM(name="Greenback", pack=None, irhash="0123456789abcdef", on_device=True),
+        ]
+    )
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert device_table.row_count == 2
+        device_table.focus()
+        await pilot.press("down")  # row 1 = Greenback
+        assert device_table.cursor_row == 1
+        await pilot.press("1")  # away to library
+        await pilot.pause()
+        await pilot.press("3")  # back — on_screen_resume re-queries the device pane
+        await pilot.pause()
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert device_table.cursor_row == 1
+
+
 async def test_bracketed_ir_names_render_literally_no_crash():
     """Markup regression (#12): local and device IR names/packs carrying
     brackets must render verbatim in the DataTable cells, never crash."""

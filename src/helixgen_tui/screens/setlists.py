@@ -139,6 +139,10 @@ class SetlistsScreen(LibrarianScreen):
         # on a successful add/remove/move OpResult so the right pane updates
         # immediately, without a round trip back through list_setlists().
         self._tone_order: dict[str, list[str]] = {}
+        # Name of the setlist the tones pane last rendered. Guards the tones
+        # cursor restore so it only fires when the pane is rebuilt for the same
+        # setlist (a ScreenResume re-render); switching setlists resets to top.
+        self._tones_setlist_name: str | None = None
 
     def body(self) -> ComposeResult:
         with Horizontal():
@@ -169,21 +173,31 @@ class SetlistsScreen(LibrarianScreen):
 
     def _rebuild_setlist_table(self) -> None:
         table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        prev_key = self._capture_cursor_key(table)
         table.clear()
         for setlist in self._setlists:
             glyph = "✓" if setlist.sync_enabled else "○"
             table.add_row(Text(setlist.name), glyph, key=setlist.name)
+        self._restore_cursor_key(table, prev_key)
 
     def _rebuild_tones_table(self) -> None:
         table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
-        table.clear()
         setlist = self._selected_setlist()
+        # Preserve the tones cursor only across a same-setlist rebuild (the
+        # ScreenResume case, #8a). Switching to a different setlist resets the
+        # right pane to the top — restoring by tone_id there would wrongly stick
+        # the cursor to a tone the two setlists happen to share.
+        same_setlist = setlist is not None and setlist.name == self._tones_setlist_name
+        prev_key = self._capture_cursor_key(table) if same_setlist else None
+        table.clear()
+        self._tones_setlist_name = setlist.name if setlist is not None else None
         if setlist is None:
             return
         for tone_id in self._tone_order.get(setlist.name, []):
             tone = self.app.core.library.get_tone(tone_id)
             name = tone.name if tone is not None else tone_id
             table.add_row(Text(name), key=tone_id)
+        self._restore_cursor_key(table, prev_key)
 
     @on(DataTable.RowHighlighted, f"#{_SETLIST_TABLE_ID}")
     def _on_setlist_highlighted(self, event: DataTable.RowHighlighted) -> None:
