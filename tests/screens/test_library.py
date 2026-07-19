@@ -148,6 +148,21 @@ async def test_filter_narrows_rows_by_substring():
         assert "Foo Fighters - Everlong" in str(table.get_cell_at((0, 0)))
 
 
+async def test_filter_matches_gappy_subsequence():
+    """A gappy query narrows to the intended tone via ordered subsequence match,
+    which a contiguous-substring filter would miss. 'ffever' is not a substring
+    of 'Foo Fighters - Everlong' but is an ordered subsequence of it."""
+    app = HelixgenTuiApp(_core())
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 3
+        await pilot.press("/")
+        for char in "ffever":
+            await pilot.press(char)
+        assert table.row_count == 1
+        assert "Foo Fighters - Everlong" in str(table.get_cell_at((0, 0)))
+
+
 async def test_escape_clears_filter():
     app = HelixgenTuiApp(_core())
     async with app.run_test() as pilot:

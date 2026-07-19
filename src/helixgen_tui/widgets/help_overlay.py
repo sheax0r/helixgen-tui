@@ -25,7 +25,7 @@ helixgen-tui — key bindings
     a        Make active (installs first if local-only)
     s        Sync tone to device
     r        Refresh
-    /        Filter by name
+    /        Fuzzy-filter by name
 
   Tone editor
     up/down  Move selection in the focused pane

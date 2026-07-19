@@ -68,22 +68,24 @@ Scope stays name-only and Library-only; matching extra columns and adding
 filters to other surfaces are the excluded #10 product decisions. No
 match-highlighting, no change to enter behavior.
 
-- [ ] Write the failing pilot test first in `tests/screens/test_library.py`
+- [x] Write the failing pilot test first in `tests/screens/test_library.py`
       (alongside `test_filter_narrows_rows_by_substring`, line ~136): a gappy
       query (e.g. typing `ffever` or `bib`) narrows to the intended tone,
       which a substring match would miss. Keep/verify the existing substring
       test still passes (subsequence is a superset).
-- [ ] Run it to confirm it fails under the current substring filter
-- [ ] Implement a small pure `_subsequence_match(query, text) -> bool`
+- [x] Run it to confirm it fails under the current substring filter
+- [x] Implement a small pure `_subsequence_match(query, text) -> bool`
       helper (case-insensitive; empty query matches everything) and use it in
       `_rebuild_table` in place of the `query not in tone.name.lower()` check
       (`src/helixgen_tui/screens/library.py:87-99`). Keep the helper local to
       the screen module (or a tiny `helixgen_tui/fuzzy.py`); no dependency on
       the `helixgen` package.
-- [ ] Run the tests and confirm they pass
-- [ ] Update the filter's user-facing description if it names "substring":
+- [x] Run the tests and confirm they pass
+- [x] Update the filter's user-facing description if it names "substring":
       README filter/key notes and the `?` help overlay — reword to "fuzzy
-      filter" if the old wording is present (`src/helixgen_tui/widgets/help_overlay.py`, `README.md`)
+      filter" if the old wording is present. No "substring" wording existed;
+      refreshed the `?` help overlay to "Fuzzy-filter by name"
+      (`src/helixgen_tui/widgets/help_overlay.py`); README needed no change.
 
 ## Validation Commands
 

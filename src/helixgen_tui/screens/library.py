@@ -32,6 +32,17 @@ _FILTER_ID = "library-filter"
 _TABLE_ID = "library-table"
 
 
+def _subsequence_match(query: str, text: str) -> bool:
+    """Case-insensitive ordered-subsequence match — the standard fuzzy-finder
+    default. Every character of ``query`` appears in ``text`` in order (gaps
+    allowed). An empty query matches everything. Strictly a superset of a
+    contiguous-substring match."""
+    query = query.lower()
+    text = text.lower()
+    it = iter(text)
+    return all(char in it for char in query)
+
+
 class ActivateToneRequested(Message):
     """Screen-internal hand-off: launch the make-active worker on the UI thread.
 
@@ -90,7 +101,7 @@ class LibraryScreen(LibrarianScreen):
         table.clear()
         query = self.query_one(f"#{_FILTER_ID}", Input).value.strip().lower()
         for tone in self._tones:
-            if query and query not in tone.name.lower():
+            if query and not _subsequence_match(query, tone.name):
                 continue
             table.add_row(
                 Text(tone.name),
