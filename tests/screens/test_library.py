@@ -265,6 +265,48 @@ async def test_enter_on_filter_moves_cursor_to_top_hit_without_activating():
         assert isinstance(app.screen, LibraryScreen)
 
 
+async def test_enter_on_filter_parks_on_the_cursor_row_and_refocuses_the_table():
+    """Enter acts on the row the user is *on*, not on ``_visible[0]``, and hands
+    focus back to the table.
+
+    The cursor is moved off the top hit first: without that, "acts on the
+    highlighted row" and "jumps to the top hit" are indistinguishable, and a
+    ``move_cursor_to`` that no-ops passes either way. The focus half is what
+    makes Enter more than a no-op — the following ``s`` has to reach the screen
+    binding rather than being typed into the Input."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        filter_input = app.screen.query_one(Input)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        assert table.row_count == 2
+        # Off the top hit, onto the gappy match ranked below it.
+        table.move_cursor(row=1)
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert table.cursor_row == 1
+        assert str(table.get_cell_at((table.cursor_row, 0))) == "Jazz Chorus Mod"
+        assert table.has_focus
+        # Enter itself never mutates, and the query stays live to arrow through.
+        assert port.calls == []
+        assert filter_input.value == "jcm"
+        assert table.row_count == 2
+
+        await pilot.press("s")
+        await pilot.pause()
+        assert ("sync_tone", ("tone-jazz",)) in port.calls
+
+
 async def test_escape_clears_filter():
     app = HelixgenTuiApp(_core())
     async with app.run_test() as pilot:

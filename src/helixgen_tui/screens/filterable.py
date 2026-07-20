@@ -110,13 +110,22 @@ class FilterableTableMixin:
         return item
 
     def filter_on_enter(self, item: Any) -> None:
-        """Park the table cursor on ``item`` and stop there.
+        """Park the table cursor on ``item`` and hand focus back to the table.
 
         The default for every browse surface: activate/sync/push/delete/rename
         keep their own keys, so a device write is never a side effect of
         searching. Only a picker whose whole purpose is committing a choice
-        (``AddToneModal``) overrides this."""
+        (``AddToneModal``) overrides this.
+
+        Focus is the half that makes Enter an action rather than a no-op: the
+        cursor is already on this row (``selected()`` read it from there), so
+        without the ``focus()`` the query stays live with focus trapped in the
+        Input, and the `/jcm` -> enter -> `s` sequence types "s" into the
+        filter instead of syncing. Moving focus deliberately leaves the query
+        in place — escape still clears it — so the narrowed list is what the
+        user arrows through next."""
         self.move_cursor_to(item)
+        self.filter_table().focus()
 
     # -- the wiring --------------------------------------------------------
 

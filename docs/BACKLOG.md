@@ -310,3 +310,29 @@ shape (title + `DataTable`), and escape-cancel behavior — and after #19 they
 will share the filter wiring too. Factor out a common picker base so the layout
 and the escape/enter contract are defined once. Cosmetic/structural only; no
 behavior change intended.
+
+## 22. IR pane cursor can drift between identical rows (review finding, 2026-07-19)
+
+`_IrPane.filter_identity` (`screens/irs.py`) is `(name, pack, irhash)`, which is
+not a true primary key: an IR library can hold genuinely identical duplicate
+entries (`test_repeated_ir_instance_renders_as_two_rows` covers the rendering
+side). `move_cursor_to` returns the *first* match, so a cursor parked on the
+second duplicate snaps back to the first on any rebuild. The positional
+`_restore_cursor_key` this replaced preserved it, so it is a small regression —
+accepted because the rows are indistinguishable: both resolve to the same
+`push_ir(irhash or name)` / `delete_ir(name)` target, so no wrong device write
+is reachable. Fix if it ever becomes visible: have `move_cursor_to` prefer the
+candidate at or after the previous cursor row, or carry backing position in the
+identity for panes whose items can be fully identical.
+
+## 23. `_renamed_to` can be consumed by an unrelated refresh (review finding, 2026-07-19)
+
+`IrsScreen._restore_renamed_cursor` (`screens/irs.py`) stores the pending name at
+rename submit and clears it in whichever `_apply_device_irs` runs next. If an `r`
+or a `ScreenResume` refresh interleaves before the rename's own
+`RefreshDeviceIrsRequested` lands, that earlier refresh sees the pre-rename list,
+matches nothing, and clears the pending restore — leaving the cursor at row 0 on
+the real post-rename refresh. Same outcome when a live filter excludes the new
+name. Low likelihood and mitigated: `d` shows its plan in `ConfirmModal` before
+deleting anything. Fix: consume `_renamed_to` only on the `_apply_device_irs`
+triggered by `RefreshDeviceIrsRequested`, or leave it set until it matches.

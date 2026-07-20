@@ -48,8 +48,11 @@ the newly focused pane gets ranked and the other returns to its native order).
 Type part of a name — matching is an ordered subsequence, so `jcm` finds
 "JCM800 Crunch"; matches sort best-first and the matched characters are
 highlighted, and the cursor rides the top hit as you type. `enter` in a filter
-acts on the highlighted row — the best match — and never mutates anything
-(activate, sync, push, delete stay on their own keys). `escape` clears the
+parks on the highlighted row — the best match — and hands focus back to the
+list, so `s`/`p`/`d` act on it instead of typing into the filter; it never
+mutates anything itself (activate, sync, push, delete stay on their own keys).
+The query stays live after `enter`, so you keep arrowing the narrowed list.
+`escape` clears the
 filter, and on IRs it unwinds one step at a time, innermost first — an open
 rename prompt goes before a live query, so a filter typed before renaming takes
 a second `escape`. The add-tone picker in Setlists filters the same way, where

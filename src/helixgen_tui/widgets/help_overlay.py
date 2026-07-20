@@ -21,7 +21,8 @@ helixgen-tui — key bindings
     escape   Close a modal / clear a filter
     /        Fuzzy-filter by name (Library, Setlists, IRs)
 
-    In a filter, enter jumps to the best match — it never
+    On the browse screens, enter in a filter parks on the
+    highlighted match and returns focus to the list — it never
     activates, syncs, pushes, or deletes. Matched characters
     are highlighted; best matches sort first.
 
@@ -30,7 +31,7 @@ helixgen-tui — key bindings
     a        Make active (installs first if local-only)
     s        Sync tone to device
     r        Refresh
-    /        Filter tones (enter jumps to the best match)
+    /        Filter tones (enter parks on the match)
 
   Tone editor
     up/down  Move selection in the focused pane
@@ -56,7 +57,7 @@ helixgen-tui — key bindings
     S        Sync selected setlist
     A        Sync all setlists
     r        Refresh
-    /        Filter setlists (enter jumps to the best match)
+    /        Filter setlists (enter parks on the match)
 
     The add-tone picker filters as you type; enter adds the
     best match.
@@ -67,8 +68,8 @@ helixgen-tui — key bindings
     d        Delete device IR
     P        Prune device IRs
     r        Refresh
-    /        Filter the focused pane (enter jumps to the
-             best match)
+    /        Filter the focused pane (enter parks on
+             the match)
     escape   Cancel a rename first, then clear a live
              filter
 
