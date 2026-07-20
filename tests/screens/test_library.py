@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.models import SetlistVM, SyncState, ToneVM
@@ -278,6 +279,34 @@ async def test_escape_clears_filter():
         assert table.row_count == 3
 
 
+async def test_escape_on_empty_filter_hands_focus_back_to_the_table():
+    """Escape from an empty input still releases focus. Textual's Input eats
+    every printable key before screen bindings run, so returning early there
+    would strand the user: no tab switch, no activate, no help overlay."""
+    app = HelixgenTuiApp(_core())
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        filter_input = app.screen.query_one(Input)
+        await pilot.press("/")
+        assert filter_input.has_focus
+        await pilot.press("escape")
+        assert table.has_focus
+        # The keys that were dead while the input held focus now reach bindings.
+        await pilot.press("?")
+        assert filter_input.value == ""
+
+
+async def test_escape_on_the_table_with_no_filter_is_a_no_op():
+    app = HelixgenTuiApp(_core())
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        assert table.has_focus
+        assert isinstance(app.screen, LibraryScreen)
+
+
 async def test_refresh_picks_up_newly_appended_tone():
     core = _core()
     app = HelixgenTuiApp(core)
@@ -452,6 +481,31 @@ async def test_make_active_local_only_confirms_then_installs_then_activates():
         assert port.calls.index(("sync_tone", ("tone-2",))) < port.calls.index(
             ("make_active", ("tone-2",))
         )
+
+
+async def test_make_active_re_reads_sync_state_instead_of_the_cached_row():
+    """`s` installs a tone but nothing refreshes the screen, so the cached
+    ToneVM still reads LOCAL_ONLY. `a` must re-read the library rather than
+    confirm-and-sync a tone that is already on the device."""
+    port = FakeDevicePort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("down")  # row 1 = Foo Fighters (LOCAL_ONLY, tone-2)
+        await pilot.press("s")
+        await pilot.pause()
+        assert ("sync_tone", ("tone-2",)) in port.calls
+        # Stand in for the observation file a real sync writes: the library now
+        # reports SYNCED while the table's snapshot still says LOCAL_ONLY.
+        library = app.core.library
+        index = library.tones.index(next(t for t in library.tones if t.tone_id == "tone-2"))
+        library.tones[index] = replace(library.tones[index], sync=SyncState.SYNCED)
+
+        port.calls.clear()
+        await pilot.press("a")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal)
+        assert ("make_active", ("tone-2",)) in port.calls
+        assert ("sync_tone", ("tone-2",)) not in port.calls
 
 
 async def test_make_active_local_only_cancel_makes_no_calls():

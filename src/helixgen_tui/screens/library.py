@@ -120,13 +120,18 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
 
     def action_clear_filter(self) -> None:
         """Escape drops a live query and returns to the table. With no query
-        there is nothing to unwind, matching Setlists and IRs — escape unwinds
-        one step at a time and does nothing when there is no step to take."""
+        there is still focus to unwind: escape from inside an empty input hands
+        the table back, or the input would swallow every printable key and the
+        screen's own bindings would be unreachable. Escape from the table with
+        no query is the only true no-op."""
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
-        if not filter_input.value:
+        table = self.query_one(f"#{_TABLE_ID}", DataTable)
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> _on_filter_changed -> rebuild
+            table.focus()
             return
-        filter_input.value = ""  # triggers Input.Changed -> _on_filter_changed -> rebuild
-        self.query_one(f"#{_TABLE_ID}", DataTable).focus()
+        if filter_input.has_focus:
+            table.focus()
 
     @on(Input.Changed, f"#{_FILTER_ID}")
     def _on_filter_changed(self, event: Input.Changed) -> None:
@@ -153,8 +158,16 @@ class LibraryScreen(FilterableTableMixin, LibrarianScreen):
         """The tone under the table cursor, or None on an empty/filtered table.
 
         Resolved through the mixin's visible list, not by parsing row keys, so
-        a ranked/filtered table never maps a cursor row to the wrong tone."""
-        return self.selected()
+        a ranked/filtered table never maps a cursor row to the wrong tone — then
+        re-read from the library, because ``_visible`` holds the snapshot from
+        the last refresh and nothing refreshes after a sync. Acting on the stale
+        copy would show `a` a LOCAL_ONLY tone that `s` already installed and
+        push a redundant device write past the confirm. Falls back to the
+        snapshot if the re-read comes up empty."""
+        tone = self.selected()
+        if tone is None:
+            return None
+        return self.app.core.library.get_tone(tone.tone_id) or tone
 
     def _activate(self, tone_id: str) -> None:
         """Launch the make-active worker. Always called on the UI thread (a key

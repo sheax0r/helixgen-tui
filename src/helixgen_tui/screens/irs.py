@@ -156,6 +156,10 @@ class IrsScreen(LibrarianScreen):
         self._local_irs: list[IrVM] = []
         self._device_irs: list[IrVM] = []
         self._renaming_ir: str | None = None
+        # Set by a submitted rename, consumed by the refresh it triggers: the
+        # rename is the one mutation that invalidates filter_identity's name
+        # field, so the device pane cannot restore the cursor on its own.
+        self._renamed_to: str | None = None
         self._local_pane = _IrPane(self, _LOCAL_TABLE_ID, lambda: self._local_irs)
         self._device_pane = _IrPane(self, _DEVICE_TABLE_ID, lambda: self._device_irs)
         self._local_pane.active = True
@@ -293,8 +297,26 @@ class IrsScreen(LibrarianScreen):
             return
         self._device_irs = list(result.value)  # type: ignore[arg-type]
         self._device_pane.rebuild_filtered()
+        self._restore_renamed_cursor()
         table.display = True
         placeholder.display = False
+
+    def _restore_renamed_cursor(self) -> None:
+        """Park the device cursor back on an IR that a rename just moved.
+
+        ``filter_identity`` carries the display name, so after a rename the
+        rebuild cannot match the old identity and leaves the cursor at row 0 —
+        with focus already back on the device table, the next `d` would pre-fill
+        a delete plan for whatever sorted to the top instead of the IR the user
+        just renamed. Matching by the new name repairs that."""
+        new_name = self._renamed_to
+        self._renamed_to = None
+        if new_name is None:
+            return
+        for ir in self._device_irs:
+            if ir.name == new_name:
+                self._device_pane.move_cursor_to(ir)
+                return
 
     def _selected_device_ir(self) -> IrVM | None:
         """Resolved through the pane's visible list — see _selected_local_ir."""
@@ -423,11 +445,16 @@ class IrsScreen(LibrarianScreen):
             self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable).focus()
             return
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
-        if not filter_input.value:
-            return
-        filter_input.value = ""  # triggers Input.Changed -> rebuild
         # Return focus to the pane the filter was targeting, so p/d/R/P act
         # instead of typing into the input (matching Library and Setlists).
+        # With no query that hand-back is the whole point: escape inside an
+        # empty input must still release focus, or the input keeps consuming
+        # every printable key and no screen binding fires. Escape pressed on a
+        # pane table with no query stays a no-op.
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> rebuild
+        elif not filter_input.has_focus:
+            return
         self.query_one(f"#{self._active_pane().filter_table_id}", DataTable).focus()
 
     @on(Input.Submitted, f"#{_RENAME_INPUT_ID}")
@@ -440,6 +467,7 @@ class IrsScreen(LibrarianScreen):
         self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable).focus()
         if not old_name or not new_name or new_name == old_name:
             return
+        self._renamed_to = new_name
         device = self.app.core.device
         self.app.device_service.run(
             "rename_ir",

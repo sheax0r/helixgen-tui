@@ -865,6 +865,23 @@ async def test_escape_with_no_filter_leaves_the_tones_pane_focused():
         assert tones_table.has_focus
 
 
+async def test_escape_inside_an_empty_filter_hands_the_setlists_pane_back():
+    """The other half of the no-query case: focus is in the input, so escape has
+    a step to unwind after all. Leaving it there strands the user — the Input
+    consumes every printable key before a screen binding sees it."""
+    app = _app()
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        filter_input = app.screen.query_one("#setlists-filter", Input)
+        filter_input.focus()
+        await pilot.pause()
+        assert filter_input.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.query_one("#setlists-table", DataTable).has_focus
+
+
 async def test_escape_with_a_live_filter_still_returns_to_the_setlists_pane():
     app = _app()
     async with app.run_test() as pilot:

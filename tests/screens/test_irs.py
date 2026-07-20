@@ -576,6 +576,47 @@ async def test_escape_still_cancels_rename_when_filter_is_empty():
         assert port.calls == []
 
 
+async def test_rename_keeps_the_cursor_on_the_renamed_ir():
+    """filter_identity carries the display name, so the refresh a rename fires
+    cannot match the old identity. Without a repair the cursor falls to row 0
+    and the next `d` pre-fills a delete plan for the wrong IR."""
+    device = [
+        IrVM(name="Alpha Cab", pack=None, irhash="aaaaaaaaaaaaaaaa", on_device=True),
+        IrVM(name="Bravo Cab", pack=None, irhash="bbbbbbbbbbbbbbbb", on_device=True),
+    ]
+    app, port = _app(device_irs=device)
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        device_table.move_cursor(row=1)  # Bravo Cab
+        await pilot.press("R")
+        await pilot.pause()
+        rename_input = app.screen.query_one("#irs-rename-input", Input)
+        rename_input.value = "Zulu Cab"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert ("rename_ir", ("Bravo Cab", "Zulu Cab")) in port.calls
+        assert str(device_table.get_cell_at((device_table.cursor_row, 0))) == "Zulu Cab"
+
+
+async def test_escape_on_empty_filter_hands_focus_back_to_the_active_pane():
+    """Escape inside an empty filter still releases focus, or the Input keeps
+    eating printable keys and p/d/R/P never reach the screen bindings."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        filter_input = app.screen.query_one("#irs-filter", Input)
+        filter_input.focus()
+        await pilot.pause()
+        assert filter_input.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.query_one("#irs-device-table", DataTable).has_focus
+        assert port.calls == []
+
+
 async def test_bracketed_ir_names_render_literally_no_crash():
     """Markup regression (#12): local and device IR names/packs carrying
     brackets must render verbatim in the DataTable cells, never crash."""
