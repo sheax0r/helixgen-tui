@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from helixgen_tui.app import HelixgenTuiApp
+from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
@@ -431,6 +432,192 @@ async def test_device_ir_selection_survives_screen_resume():
         assert device_table.cursor_row == 1
 
 
+# --- #10: one fuzzy filter, applied to whichever pane holds focus ----------
+
+_FILTER_LOCAL_IRS = [
+    IrVM(name="Greenback", pack="Factory", irhash="0123456789abcdef", on_device=None),
+    IrVM(name="Jazz Chorus Mod", pack="Factory", irhash="1111111111111111", on_device=None),
+    IrVM(name="JCM800 Cab", pack="Factory", irhash="2222222222222222", on_device=None),
+]
+
+_FILTER_DEVICE_IRS = [
+    IrVM(name="V30 Cab", pack=None, irhash="deadbeefcafef00d", on_device=True),
+    IrVM(name="JCM800 Cab", pack=None, irhash="2222222222222222", on_device=True),
+]
+
+
+def _column(table: DataTable, col: int = 0) -> list[str]:
+    return [str(table.get_cell_at((row, col))) for row in range(table.row_count)]
+
+
+async def _open_irs(pilot, focus: str = "#irs-local-table"):
+    await pilot.press("3")
+    await pilot.pause()
+    pilot.app.screen.query_one(focus, DataTable).focus()
+    await pilot.pause()
+
+
+async def test_ir_filter_narrows_the_focused_pane_only():
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS), device_irs=list(_FILTER_DEVICE_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-local-table")
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+
+        app.screen.query_one("#irs-filter", Input).value = "jcm"
+        await pilot.pause()
+        assert _column(local_table) == ["JCM800 Cab", "Jazz Chorus Mod"]
+        assert device_table.row_count == 2  # untouched while the local pane has focus
+
+        device_table.focus()
+        await pilot.pause()
+        assert _column(device_table) == ["JCM800 Cab"]
+        assert local_table.row_count == 3  # restored to unfiltered
+
+
+async def test_ir_filter_ranks_best_match_first():
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        app.screen.query_one("#irs-filter", Input).value = "jcm"
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        # Contiguous "JCM" outranks the gappy "Jazz Chorus Mod" despite coming
+        # later in native order.
+        assert str(local_table.get_cell_at((0, 0))) == "JCM800 Cab"
+
+
+async def test_filtered_ir_selection_resolves_to_the_right_ir():
+    """Regression guard for the positional row-key hazard: the match is not at
+    index 0 of the backing list, so an index-derived lookup would push the wrong
+    IR."""
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        app.screen.query_one("#irs-filter", Input).value = "green"
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 1
+        local_table.focus()
+        await pilot.press("p")
+        await pilot.pause()
+        assert ("push_ir", ("0123456789abcdef",)) in port.calls
+
+
+async def test_duplicate_display_names_still_select_distinctly():
+    """Two IRs sharing a display name but differing by hash stay distinct rows."""
+    dupes = [
+        IrVM(name="V30 Cab", pack="A", irhash="aaaaaaaaaaaaaaaa", on_device=None),
+        IrVM(name="Greenback", pack="B", irhash="cccccccccccccccc", on_device=None),
+        IrVM(name="V30 Cab", pack="C", irhash="bbbbbbbbbbbbbbbb", on_device=None),
+    ]
+    app, port = _app(local_irs=dupes)
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        app.screen.query_one("#irs-filter", Input).value = "v30"
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 2
+        local_table.focus()
+        await pilot.press("down")
+        await pilot.press("p")
+        await pilot.pause()
+        assert ("push_ir", ("bbbbbbbbbbbbbbbb",)) in port.calls
+
+
+async def test_enter_on_ir_filter_focuses_top_hit_without_mutating():
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS), device_irs=list(_FILTER_DEVICE_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        await pilot.press("slash")
+        await pilot.pause()
+        filter_input = app.screen.query_one("#irs-filter", Input)
+        assert filter_input.has_focus
+        filter_input.value = "jcm"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.cursor_row == 0
+        assert str(local_table.get_cell_at((0, 0))) == "JCM800 Cab"
+        assert port.calls == []  # no push, delete, rename or prune
+
+
+async def test_ir_filter_clears_on_escape():
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        await pilot.press("slash")
+        await pilot.pause()
+        filter_input = app.screen.query_one("#irs-filter", Input)
+        filter_input.value = "jcm"
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 2
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert filter_input.value == ""
+        assert local_table.row_count == 3
+
+
+async def test_escape_still_cancels_rename_when_filter_is_empty():
+    """The shared escape must not swallow the rename-cancel path."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        await pilot.press("R")
+        await pilot.pause()
+        rename_input = app.screen.query_one("#irs-rename-input", Input)
+        assert rename_input.display is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert rename_input.display is False
+        assert port.calls == []
+
+
+async def test_rename_keeps_the_cursor_on_the_renamed_ir():
+    """filter_identity carries the display name, so the refresh a rename fires
+    cannot match the old identity. Without a repair the cursor falls to row 0
+    and the next `d` pre-fills a delete plan for the wrong IR."""
+    device = [
+        IrVM(name="Alpha Cab", pack=None, irhash="aaaaaaaaaaaaaaaa", on_device=True),
+        IrVM(name="Bravo Cab", pack=None, irhash="bbbbbbbbbbbbbbbb", on_device=True),
+    ]
+    app, port = _app(device_irs=device)
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        device_table.move_cursor(row=1)  # Bravo Cab
+        await pilot.press("R")
+        await pilot.pause()
+        rename_input = app.screen.query_one("#irs-rename-input", Input)
+        rename_input.value = "Zulu Cab"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert ("rename_ir", ("Bravo Cab", "Zulu Cab")) in port.calls
+        assert str(device_table.get_cell_at((device_table.cursor_row, 0))) == "Zulu Cab"
+
+
+async def test_escape_on_empty_filter_hands_focus_back_to_the_active_pane():
+    """Escape inside an empty filter still releases focus, or the Input keeps
+    eating printable keys and p/d/R/P never reach the screen bindings."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        filter_input = app.screen.query_one("#irs-filter", Input)
+        filter_input.focus()
+        await pilot.pause()
+        assert filter_input.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.query_one("#irs-device-table", DataTable).has_focus
+        assert port.calls == []
+
+
 async def test_bracketed_ir_names_render_literally_no_crash():
     """Markup regression (#12): local and device IR names/packs carrying
     brackets must render verbatim in the DataTable cells, never crash."""
@@ -445,3 +632,154 @@ async def test_bracketed_ir_names_render_literally_no_crash():
         assert str(local_table.get_cell_at((0, 1))) == "[reverb]"
         device_table = app.screen.query_one("#irs-device-table", DataTable)
         assert str(device_table.get_cell_at((0, 0))) == "Dev [x] IR"
+
+
+async def test_repeated_ir_instance_renders_as_two_rows():
+    """Row keys are positional, so the *same* IrVM object listed twice must
+    still produce two distinct rows — keying on object identity collapsed them
+    into one key and crashed DataTable with DuplicateKey."""
+    shared = IrVM(name="V30 Cab", pack="Factory", irhash="aaaaaaaaaaaaaaaa", on_device=None)
+    app, port = _app(local_irs=[shared, shared])
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert local_table.row_count == 2
+
+        app.screen.query_one("#irs-filter", Input).value = "v30"
+        await pilot.pause()
+        assert local_table.row_count == 2
+
+
+async def test_filter_still_works_after_the_device_pane_disappears():
+    """Hiding the device table fires no DescendantFocus, so the pane would keep
+    `active` while unreachable and the shared filter would go inert on both."""
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS), device_irs=list(_FILTER_DEVICE_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert device_table.display is True
+
+        port.state = DeviceStateVM(
+            status="offline", model=None, address=None, active_tone=None, detail=""
+        )
+        port.device_irs = []
+        port.fail_next = True
+        await pilot.press("r")
+        await pilot.pause()
+        assert device_table.display is False
+
+        app.screen.query_one("#irs-filter", Input).value = "jcm"
+        await pilot.pause()
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        assert _column(local_table) == ["JCM800 Cab", "Jazz Chorus Mod"]
+
+
+async def test_enter_on_ir_filter_targets_the_focused_device_pane():
+    """The submit must reach whichever pane holds the filter, not always local."""
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS), device_irs=list(_FILTER_DEVICE_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        await pilot.press("slash")
+        await pilot.pause()
+        filter_input = app.screen.query_one("#irs-filter", Input)
+        filter_input.value = "jcm"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        device_table = app.screen.query_one("#irs-device-table", DataTable)
+        assert str(device_table.get_cell_at((device_table.cursor_row, 0))) == "JCM800 Cab"
+        assert port.calls == []  # no push, delete, rename or prune
+
+
+async def test_escape_returns_focus_to_the_pane_after_clearing_the_filter():
+    """Otherwise focus stays in the Input and p/d/R/P type characters."""
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        await pilot.press("slash")
+        await pilot.pause()
+        app.screen.query_one("#irs-filter", Input).value = "jcm"
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.query_one("#irs-local-table", DataTable).has_focus
+
+
+async def test_escape_cancels_an_open_rename_before_dropping_the_filter():
+    """Precedence, both states live at once: escape unwinds innermost-first, so
+    the first cancels the rename prompt and the second clears the query. The
+    other order would leave the rename Input visible but unfocused, with the
+    filter gone and keystrokes driving the table underneath it."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot, "#irs-device-table")
+        filter_input = app.screen.query_one("#irs-filter", Input)
+        filter_input.value = "v30"
+        await pilot.pause()
+        app.screen.query_one("#irs-device-table", DataTable).focus()
+        await pilot.pause()
+        await pilot.press("R")
+        await pilot.pause()
+        rename_input = app.screen.query_one("#irs-rename-input", Input)
+        assert rename_input.display is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert rename_input.display is False
+        assert filter_input.value == "v30"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert filter_input.value == ""
+        assert port.calls == []
+
+
+async def test_enter_on_an_empty_ir_filter_does_not_mutate():
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        await pilot.press("slash")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert port.calls == []
+
+
+async def test_local_cursor_follows_the_ir_across_a_refresh_that_drops_an_earlier_one():
+    """The IR panes' row keys are positional, so restoring the cursor by key
+    would park it on whatever IR now occupies the old index. It has to follow
+    the item: removing an IR above the cursor must leave the same IR selected."""
+    app, port = _app(local_irs=list(_FILTER_LOCAL_IRS))
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        local_table = app.screen.query_one("#irs-local-table", DataTable)
+        local_table.move_cursor(row=2)
+        await pilot.pause()
+        assert app.screen._selected_local_ir().name == "JCM800 Cab"
+
+        # drop "Greenback" (row 0): every later IR shifts up one position
+        app.core.local_irs = [ir for ir in _FILTER_LOCAL_IRS if ir.name != "Greenback"]
+        app.screen.refresh_local_irs()
+        await pilot.pause()
+
+        assert app.screen._selected_local_ir().name == "JCM800 Cab"
+
+
+async def test_a_failed_device_refresh_drops_the_pending_rename_target():
+    """The rename target is consumed by the refresh that follows the rename. If
+    that refresh fails, the target must die with it — otherwise it survives to
+    park the device cursor at some arbitrary later refresh the user never
+    connected to the rename."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        screen = app.screen
+        screen._renamed_to = "Renamed"
+
+        screen._apply_device_irs(QueryResult(ok=False, value=None, message="boom"))
+        await pilot.pause()
+
+        assert screen._renamed_to is None
+        assert screen.query_one("#irs-device-table", DataTable).display is False

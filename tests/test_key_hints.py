@@ -61,6 +61,18 @@ async def test_every_mode_screen_shows_its_bindings_in_a_footer() -> None:
             assert "Library" not in descriptions
 
 
+async def test_filter_binding_is_advertised_on_every_filtered_screen() -> None:
+    """The `/` filter shipped on Setlists and IRs (#10) must be discoverable —
+    the bindings are declared without `show=False`, so the footer lists them."""
+    app = HelixgenTuiApp(FakeCore(tones=_TONES))
+    async with app.run_test(size=(140, 40)) as pilot:
+        for key, mode in [("1", "library"), ("2", "setlists"), ("3", "irs")]:
+            await pilot.press(key)
+            await pilot.pause()
+            descriptions = _footer_descriptions(app)
+            assert "Filter" in descriptions, f"{mode}: {descriptions}"
+
+
 async def test_clicking_a_footer_key_triggers_the_action() -> None:
     from helixgen_tui.screens.setlists import AddToneModal
 

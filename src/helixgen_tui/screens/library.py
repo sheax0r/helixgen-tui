@@ -13,12 +13,12 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable, Input
 
 from helixgen_tui.core.models import MutationPlan, OpResult, SyncState, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.filterable import FilterableTableMixin
 from helixgen_tui.screens.tone_editor import ToneEditorScreen
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
@@ -30,17 +30,6 @@ _SYNC_GLYPH = {
 
 _FILTER_ID = "library-filter"
 _TABLE_ID = "library-table"
-
-
-def _subsequence_match(query: str, text: str) -> bool:
-    """Case-insensitive ordered-subsequence match — the standard fuzzy-finder
-    default. Every character of ``query`` appears in ``text`` in order (gaps
-    allowed). An empty query matches everything. Strictly a superset of a
-    contiguous-substring match."""
-    query = query.lower()
-    text = text.lower()
-    it = iter(text)
-    return all(char in it for char in query)
 
 
 class ActivateToneRequested(Message):
@@ -58,11 +47,14 @@ class ActivateToneRequested(Message):
         super().__init__()
 
 
-class LibraryScreen(LibrarianScreen):
+class LibraryScreen(FilterableTableMixin, LibrarianScreen):
     """Library-mode screen: browse tones, view details, filter, refresh, activate, sync."""
 
     TAB_LABEL = "Library"
     MODE_NAME = "library"
+
+    filter_input_id = _FILTER_ID
+    filter_table_id = _TABLE_ID
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
@@ -93,23 +85,26 @@ class LibraryScreen(LibrarianScreen):
         A plain sync method (not a worker) — local library reads are cheap.
         """
         self._tones = self.app.core.library.list_tones()
-        self._rebuild_table()
+        self.rebuild_filtered()
 
-    def _rebuild_table(self) -> None:
-        table = self.query_one(f"#{_TABLE_ID}", DataTable)
-        prev_key = self._capture_cursor_key(table)
-        table.clear()
-        query = self.query_one(f"#{_FILTER_ID}", Input).value.strip().lower()
-        for tone in self._tones:
-            if query and not _subsequence_match(query, tone.name):
-                continue
-            table.add_row(
-                Text(tone.name),
-                Text(tone.guitar or ""),
-                _SYNC_GLYPH[tone.sync],
-                key=tone.tone_id,
-            )
-        self._restore_cursor_key(table, prev_key)
+    # -- FilterableTableMixin hooks ----------------------------------------
+
+    def filter_items(self) -> list[ToneVM]:
+        return self._tones
+
+    def filter_text(self, item: ToneVM) -> str:
+        return item.name
+
+    def filter_row(self, item: ToneVM, label: Text) -> tuple[object, ...]:
+        return (label, Text(item.guitar or ""), _SYNC_GLYPH[item.sync])
+
+    def filter_row_key(self, item: ToneVM, position: int) -> str:
+        return item.tone_id
+
+    def filter_identity(self, item: ToneVM) -> str:
+        """``tone_id``, not the ToneVM: `s` flips ``sync``, so value equality
+        would lose the cursor on the very rebuild that follows a sync."""
+        return item.tone_id
 
     def action_refresh(self) -> None:
         self.refresh_tones()
@@ -124,13 +119,27 @@ class LibraryScreen(LibrarianScreen):
         self.query_one(f"#{_FILTER_ID}", Input).focus()
 
     def action_clear_filter(self) -> None:
+        """Escape drops a live query and returns to the table. With no query
+        there is still focus to unwind: escape from inside an empty input hands
+        the table back, or the input would swallow every printable key and the
+        screen's own bindings would be unreachable. Escape from the table with
+        no query is the only true no-op."""
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
-        filter_input.value = ""  # triggers Input.Changed -> _on_filter_changed -> rebuild
-        self.query_one(f"#{_TABLE_ID}", DataTable).focus()
+        table = self.query_one(f"#{_TABLE_ID}", DataTable)
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> _on_filter_changed -> rebuild
+            table.focus()
+            return
+        if filter_input.has_focus:
+            table.focus()
 
     @on(Input.Changed, f"#{_FILTER_ID}")
     def _on_filter_changed(self, event: Input.Changed) -> None:
-        self._rebuild_table()
+        self.rebuild_filtered()
+
+    @on(Input.Submitted, f"#{_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self.handle_filter_submitted()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         tone_id = event.row_key.value
@@ -146,12 +155,19 @@ class LibraryScreen(LibrarianScreen):
     # -- device actions ----------------------------------------------------
 
     def _selected_tone(self) -> ToneVM | None:
-        """The tone under the table cursor, or None on an empty/filtered table."""
-        table = self.query_one(f"#{_TABLE_ID}", DataTable)
-        if table.row_count == 0:
+        """The tone under the table cursor, or None on an empty/filtered table.
+
+        Resolved through the mixin's visible list, not by parsing row keys, so
+        a ranked/filtered table never maps a cursor row to the wrong tone — then
+        re-read from the library, because ``_visible`` holds the snapshot from
+        the last refresh and nothing refreshes after a sync. Acting on the stale
+        copy would show `a` a LOCAL_ONLY tone that `s` already installed and
+        push a redundant device write past the confirm. Falls back to the
+        snapshot if the re-read comes up empty."""
+        tone = self.selected()
+        if tone is None:
             return None
-        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        return self.app.core.library.get_tone(row_key.value)
+        return self.app.core.library.get_tone(tone.tone_id) or tone
 
     def _activate(self, tone_id: str) -> None:
         """Launch the make-active worker. Always called on the UI thread (a key

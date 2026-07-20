@@ -22,44 +22,62 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import MutationPlan, OpResult, SetlistVM, ToneVM
 from helixgen_tui.screens.base import LibrarianScreen
+from helixgen_tui.screens.filterable import (
+    FilterableTableMixin,
+    capture_cursor_key,
+    restore_cursor_key,
+)
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 
 _SETLIST_TABLE_ID = "setlists-table"
 _TONES_TABLE_ID = "setlist-tones-table"
+_FILTER_ID = "setlists-filter"
+_LEFT_PANE_ID = "setlists-left-pane"
+_ADD_TONE_TABLE_ID = "add-tone-table"
+_ADD_TONE_FILTER_ID = "add-tone-filter"
 
 
-class AddToneModal(ModalScreen[str | None]):
+class AddToneModal(FilterableTableMixin, ModalScreen[str | None]):
     """Modal picker: library tones not already in the target setlist.
 
-    ``enter`` on a row dismisses with that tone's id; ``escape`` dismisses
-    with ``None``.
+    Opens with the filter focused, so the user can type straight away. ``enter``
+    in the filter dismisses with the top-ranked hit; ``enter`` (or a click) on a
+    specific row dismisses with *that* row instead. ``escape`` clears a
+    non-empty filter, and cancels the modal when the filter is already empty.
     """
 
-    DEFAULT_CSS = """
-    AddToneModal {
-        align: center middle;
-    }
+    filter_input_id = _ADD_TONE_FILTER_ID
+    filter_table_id = _ADD_TONE_TABLE_ID
 
-    AddToneModal > Container {
+    DEFAULT_CSS = f"""
+    AddToneModal {{
+        align: center middle;
+    }}
+
+    AddToneModal > Container {{
         width: 60;
         height: 16;
         padding: 1 2;
         border: round $primary;
         background: $panel;
-    }
+    }}
 
-    AddToneModal DataTable {
+    AddToneModal #{_ADD_TONE_FILTER_ID} {{
+        width: 100%;
+    }}
+
+    AddToneModal DataTable {{
         height: 1fr;
-    }
+    }}
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
@@ -70,20 +88,54 @@ class AddToneModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Container():
-            yield Static("Add tone — enter to pick, escape to cancel")
-            yield DataTable(cursor_type="row")
+            yield Static("Add tone — type to filter, enter to pick, escape to cancel")
+            yield Input(placeholder="filter", id=_ADD_TONE_FILTER_ID)
+            yield DataTable(id=_ADD_TONE_TABLE_ID, cursor_type="row")
 
     def on_mount(self) -> None:
-        table = self.query_one(DataTable)
-        table.add_columns("Tone")
-        for tone in self._tones:
-            table.add_row(Text(tone.name), key=tone.tone_id)
-        table.focus()
+        self.query_one(f"#{_ADD_TONE_TABLE_ID}", DataTable).add_columns("Tone")
+        self.rebuild_filtered()
+        self.query_one(f"#{_ADD_TONE_FILTER_ID}", Input).focus()
+
+    # -- FilterableTableMixin hooks ----------------------------------------
+
+    def filter_items(self) -> list[ToneVM]:
+        return self._tones
+
+    def filter_text(self, item: ToneVM) -> str:
+        return item.name
+
+    def filter_row(self, item: ToneVM, label: Text) -> tuple[object, ...]:
+        return (label,)
+
+    def filter_row_key(self, item: ToneVM, position: int) -> str:
+        return item.tone_id
+
+    def filter_on_enter(self, item: ToneVM) -> None:
+        """Enter in the filter picks the best match. Adding is the whole point
+        of this modal, so unlike the browse surfaces Enter does commit here —
+        it still only touches the local setlist, never the device."""
+        self.dismiss(item.tone_id)
+
+    @on(Input.Changed, f"#{_ADD_TONE_FILTER_ID}")
+    def _on_filter_changed(self, event: Input.Changed) -> None:
+        self.rebuild_filtered()
+
+    @on(Input.Submitted, f"#{_ADD_TONE_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self.handle_filter_submitted()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.dismiss(event.row_key.value)
 
     def action_cancel(self) -> None:
+        """Escape unwinds one step at a time: drop the query first, and only
+        cancel the modal when there is no query left to drop."""
+        filter_input = self.query_one(f"#{_ADD_TONE_FILTER_ID}", Input)
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> rebuild
+            filter_input.focus()
+            return
         self.dismiss(None)
 
 
@@ -100,20 +152,28 @@ class SyncAllPlanReady(Message):
         super().__init__()
 
 
-class SetlistsScreen(LibrarianScreen):
+class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
     """Setlists-mode screen: membership, ordering, and sync."""
 
     TAB_LABEL = "Setlists"
     MODE_NAME = "setlists"
+
+    filter_input_id = _FILTER_ID
+    filter_table_id = _SETLIST_TABLE_ID
 
     DEFAULT_CSS = f"""
     SetlistsScreen Horizontal {{
         height: 1fr;
     }}
 
-    SetlistsScreen #{_SETLIST_TABLE_ID} {{
+    SetlistsScreen #{_LEFT_PANE_ID} {{
         width: 1fr;
         height: 100%;
+    }}
+
+    SetlistsScreen #{_SETLIST_TABLE_ID} {{
+        width: 100%;
+        height: 1fr;
     }}
 
     SetlistsScreen #{_TONES_TABLE_ID} {{
@@ -130,6 +190,8 @@ class SetlistsScreen(LibrarianScreen):
         Binding("K", "move_up", "Move up"),
         Binding("S", "sync_setlist", "Sync"),
         Binding("A", "sync_all", "Sync all"),
+        Binding("slash", "focus_filter", "Filter", key_display="/"),
+        Binding("escape", "clear_filter", "Clear", show=False),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -146,7 +208,11 @@ class SetlistsScreen(LibrarianScreen):
 
     def body(self) -> ComposeResult:
         with Horizontal():
-            yield DataTable(id=_SETLIST_TABLE_ID, cursor_type="row")
+            # The filter belongs to the left pane only, so it is stacked above
+            # that table rather than spanning both panes.
+            with Vertical(id=_LEFT_PANE_ID):
+                yield Input(placeholder="filter", id=_FILTER_ID)
+                yield DataTable(id=_SETLIST_TABLE_ID, cursor_type="row")
             yield DataTable(id=_TONES_TABLE_ID, cursor_type="row")
 
     def on_mount(self) -> None:
@@ -160,7 +226,7 @@ class SetlistsScreen(LibrarianScreen):
         """Re-read setlists from core.setlists and rebuild both panes."""
         self._setlists = self.app.core.setlists.list_setlists()
         self._tone_order = {sl.name: list(sl.tones) for sl in self._setlists}
-        self._rebuild_setlist_table()
+        self.rebuild_filtered()
         self._rebuild_tones_table()
 
     def action_refresh(self) -> None:
@@ -171,14 +237,56 @@ class SetlistsScreen(LibrarianScreen):
         fires once, so a setlist added elsewhere would otherwise stay hidden."""
         self.refresh_setlists()
 
-    def _rebuild_setlist_table(self) -> None:
-        table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
-        prev_key = self._capture_cursor_key(table)
-        table.clear()
-        for setlist in self._setlists:
-            glyph = "✓" if setlist.sync_enabled else "○"
-            table.add_row(Text(setlist.name), glyph, key=setlist.name)
-        self._restore_cursor_key(table, prev_key)
+    # -- FilterableTableMixin hooks ----------------------------------------
+
+    def filter_items(self) -> list[SetlistVM]:
+        return self._setlists
+
+    def filter_text(self, item: SetlistVM) -> str:
+        return item.name
+
+    def filter_row(self, item: SetlistVM, label: Text) -> tuple[object, ...]:
+        return (label, "✓" if item.sync_enabled else "○")
+
+    def filter_row_key(self, item: SetlistVM, position: int) -> str:
+        return item.name
+
+    def filter_identity(self, item: SetlistVM) -> str:
+        """The name, not the SetlistVM: `a`/`d`/`J`/`K` rewrite ``tones`` and a
+        sync flips ``sync_enabled``, either of which would break value
+        equality and drop the cursor — so `S` could then sync a setlist the
+        user never selected."""
+        return item.name
+
+    def action_focus_filter(self) -> None:
+        self.query_one(f"#{_FILTER_ID}", Input).focus()
+
+    def action_clear_filter(self) -> None:
+        """Escape drops a live query and returns to the setlists pane. Focus
+        unwinds from the filter input but never off the tones pane — escape
+        pressed there must not yank focus mid-reorder, whether or not a query
+        is live, or the setlists cursor moves under the user and a later
+        `d`/`J`/`K` acts against a setlist they never chose. Escape inside the
+        input has to hand the pane back either way, or the input swallows every
+        printable key and the screen bindings go dead."""
+        filter_input = self.query_one(f"#{_FILTER_ID}", Input)
+        setlist_table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        tones_table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
+        if filter_input.value:
+            filter_input.value = ""  # triggers Input.Changed -> rebuild
+        if not tones_table.has_focus:
+            setlist_table.focus()
+
+    @on(Input.Changed, f"#{_FILTER_ID}")
+    def _on_filter_changed(self, event: Input.Changed) -> None:
+        self.rebuild_filtered()
+        # Re-ranking can put a different setlist under an unmoved cursor, which
+        # fires no RowHighlighted — rebuild the right pane explicitly.
+        self._rebuild_tones_table()
+
+    @on(Input.Submitted, f"#{_FILTER_ID}")
+    def _on_filter_submitted(self, event: Input.Submitted) -> None:
+        self.handle_filter_submitted()
 
     def _rebuild_tones_table(self) -> None:
         table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
@@ -188,7 +296,7 @@ class SetlistsScreen(LibrarianScreen):
         # right pane to the top — restoring by tone_id there would wrongly stick
         # the cursor to a tone the two setlists happen to share.
         same_setlist = setlist is not None and setlist.name == self._tones_setlist_name
-        prev_key = self._capture_cursor_key(table) if same_setlist else None
+        prev_key = capture_cursor_key(table) if same_setlist else None
         table.clear()
         self._tones_setlist_name = setlist.name if setlist is not None else None
         if setlist is None:
@@ -197,7 +305,7 @@ class SetlistsScreen(LibrarianScreen):
             tone = self.app.core.library.get_tone(tone_id)
             name = tone.name if tone is not None else tone_id
             table.add_row(Text(name), key=tone_id)
-        self._restore_cursor_key(table, prev_key)
+        restore_cursor_key(table, prev_key)
 
     @on(DataTable.RowHighlighted, f"#{_SETLIST_TABLE_ID}")
     def _on_setlist_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -206,15 +314,11 @@ class SetlistsScreen(LibrarianScreen):
     # -- selection helpers ---------------------------------------------------
 
     def _selected_setlist(self) -> SetlistVM | None:
-        """The setlist under the left table's cursor, or None on an empty table."""
-        table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
-        if table.row_count == 0:
-            return None
-        row_key = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0)).row_key
-        for setlist in self._setlists:
-            if setlist.name == row_key.value:
-                return setlist
-        return None
+        """The setlist under the left table's cursor, or None on an empty table.
+
+        Resolved through the mixin's visible list, not by parsing row keys, so
+        a ranked/filtered pane never maps a cursor row to the wrong setlist."""
+        return self.selected()
 
     def _selected_tone_id(self) -> str | None:
         """The tone id under the right table's cursor, or None on an empty table."""

@@ -181,7 +181,15 @@ class FakeDevicePort:
         return self._mutate("prune_irs")
 
     def rename_ir(self, ir_name: str, new_name: str) -> OpResult:
-        return self._mutate("rename_ir", ir_name, new_name)
+        """Applied to `device_irs`, not just recorded, so the refresh that
+        follows sees the new name — mirroring the real device, and the reason a
+        cursor-restore keyed on the old name has something to fail against."""
+        result = self._mutate("rename_ir", ir_name, new_name)
+        for index, ir in enumerate(self.device_irs):
+            if ir.name == ir_name:
+                self.device_irs[index] = _replace(ir, name=new_name)
+                break
+        return result
 
     def info(self) -> dict[str, str]:
         self._check_fail()

@@ -54,7 +54,7 @@ activate/sync/push/delete (see Task 2 and Task 5).
 
 Pure module. No Textual import, no Rich import. Unit-tested in isolation.
 
-- [ ] Write the failing tests first in a new `tests/test_fuzzy.py` (top-level peer of
+- [x] Write the failing tests first in a new `tests/test_fuzzy.py` (top-level peer of
       `tests/test_shell.py`). Assert **ordering properties and behavior, never absolute
       score numbers** — the weights are an implementation detail and hard-coding them
       makes the tests brittle. Cover:
@@ -126,9 +126,15 @@ def test_full_string_match_scores_highest_of_its_query():
     assert exact.score > embedded.score
 ```
 
-- [ ] Run it to confirm it fails for the expected reason:
+- [x] Run it to confirm it fails for the expected reason:
       `uv run pytest tests/test_fuzzy.py -v` → `ModuleNotFoundError: No module named 'helixgen_tui.fuzzy'`
-- [ ] Implement the minimal module. Shape:
+- [x] Implement the minimal module. Shape below. **Deviation:** the greedy
+      left-to-right walk sketched here cannot satisfy
+      `test_word_boundary_outranks_mid_token` — greedy alignment picks the same
+      indices `(1, 5)` for both "Crunch Rhythm" and "Crunchrhythm", so no
+      weighting can separate them. Shipped version keeps the same public API
+      (`Match`, `match`) and weights, but searches for the best-scoring
+      alignment via a memoised recursion instead of the first one.
 
 ```python
 """Scored fuzzy matching for list filtering.
@@ -205,11 +211,11 @@ def match(query: str, text: str) -> Match | None:
     return Match(score=score, indices=tuple(indices))
 ```
 
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/test_fuzzy.py -v`.
+- [x] Run the tests and confirm they pass: `uv run pytest tests/test_fuzzy.py -v`.
       If a specific ordering test fails, adjust the **weights** (not the test) until
       all ordering properties hold together — that's the point of asserting order.
-- [ ] Run `uv run ruff check .` and confirm clean.
-- [ ] Commit: `feat: add scored fuzzy matcher (#10)`
+- [x] Run `uv run ruff check .` and confirm clean.
+- [x] Commit: `feat: add scored fuzzy matcher (#10)`
 
 ### Task 2: `FilterableTableMixin` + adopt it on the Library screen
 
@@ -225,7 +231,7 @@ Put the mixin in `src/helixgen_tui/screens/filterable.py` (a focused new module 
 `screens/base.py` already carries the shared cursor helpers and shouldn't grow a
 second concern).
 
-- [ ] Write the failing tests first. Extend `tests/screens/test_library.py` using the
+- [x] Write the failing tests first. Extend `tests/screens/test_library.py` using the
       established Textual pilot + fake-service pattern already in that file. Cover:
 
 ```python
@@ -257,9 +263,9 @@ async def test_gappy_subsequence_still_narrows():
     test must keep passing under the scored matcher."""
 ```
 
-- [ ] Run them to confirm they fail for the expected reason:
+- [x] Run them to confirm they fail for the expected reason:
       `uv run pytest tests/screens/test_library.py -v`
-- [ ] Implement `src/helixgen_tui/screens/filterable.py`. Required surface:
+- [x] Implement `src/helixgen_tui/screens/filterable.py`. Required surface:
 
 ```python
 """Shared filter/rank/highlight wiring for a filter Input over a DataTable.
@@ -354,7 +360,7 @@ class FilterableTableMixin:
   - Hosts hook `Input.Changed` → `rebuild_filtered()` and `Input.Submitted` →
     `handle_filter_submitted()`.
 
-- [ ] Rewire `src/helixgen_tui/screens/library.py`:
+- [x] Rewire `src/helixgen_tui/screens/library.py`:
   - Delete `_subsequence_match` (L35-43) entirely — the matcher now lives in `fuzzy.py`.
   - Make `LibraryScreen` inherit the mixin alongside `LibrarianScreen`.
   - Replace the `_rebuild_table` filter loop with `rebuild_filtered()`, supplying
@@ -363,15 +369,15 @@ class FilterableTableMixin:
   - `filter_on_enter(tone)` moves the table cursor to that tone's row. It must **not**
     call `action_make_active` or `action_sync_tone` — those stay on `a` / `s`.
   - Keep the `/` focus and `escape` clear bindings exactly as they are.
-- [ ] Run the tests and confirm they pass:
+- [x] Run the tests and confirm they pass:
       `uv run pytest tests/test_fuzzy.py tests/screens/test_library.py -v`
-- [ ] Run the full suite — this task touches shared code:
+- [x] Run the full suite — this task touches shared code:
       `uv run pytest` and `uv run ruff check .`
-- [ ] Commit: `feat: add FilterableTableMixin, rank + highlight library filter (#10)`
+- [x] Commit: `feat: add FilterableTableMixin, rank + highlight library filter (#10)`
 
 ### Task 3: Setlists left pane filter
 
-- [ ] Write the failing tests first in `tests/screens/test_setlists.py`:
+- [x] Write the failing tests first in `tests/screens/test_setlists.py`:
 
 ```python
 async def test_setlist_filter_narrows_and_ranks():
@@ -393,10 +399,13 @@ async def test_setlist_filter_does_not_break_tones_pane():
     cursored setlist, not of a stale index."""
 ```
 
-- [ ] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Implement in `src/helixgen_tui/screens/setlists.py`:
+- [x] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Implement in `src/helixgen_tui/screens/setlists.py`:
   - Add an `Input` with id `setlists-filter` above the `setlists-table` `DataTable`
     (id `setlists-table`, L149). Mirror Library's placeholder/CSS treatment.
+    **Shipped:** the two panes sit in a `Horizontal`, so the left table is wrapped
+    in a `Vertical` (id `setlists-left-pane`) holding the filter above it — that
+    keeps the filter scoped to the left pane instead of spanning both.
   - Add `Binding("slash", "focus_filter", "Filter", key_display="/")` and
     `Binding("escape", "clear_filter", "Clear", show=False)` to the screen's BINDINGS
     (currently L125-133) — same keys and behavior as Library, for consistency.
@@ -406,8 +415,11 @@ async def test_setlist_filter_does_not_break_tones_pane():
     `RowHighlighted` fire and rebuild the tones pane). No sync, no mutation.
   - Route `_selected_setlist()` (L208-217) through the mixin's `selected()` so a
     filtered pane resolves correctly.
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Commit: `feat: fuzzy filter on the setlists pane (#10)`
+  - **Also shipped:** `Input.Changed` rebuilds the tones pane explicitly. Re-ranking
+    can swap which setlist sits under an unmoved cursor, and that fires no
+    `RowHighlighted` — the right pane would otherwise go stale.
+- [x] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Commit: `feat: fuzzy filter on the setlists pane (#10)`
 
 ### Task 4: `AddToneModal` filter + enter-to-add
 
@@ -416,7 +428,7 @@ async def test_setlist_filter_does_not_break_tones_pane():
 single-column `DataTable` and confirms via `DataTable.RowSelected` →
 `dismiss(event.row_key.value)`.
 
-- [ ] Write the failing tests first in `tests/screens/test_setlists.py` (that file
+- [x] Write the failing tests first in `tests/screens/test_setlists.py` (that file
       already exercises `AddToneModal`):
 
 ```python
@@ -443,10 +455,12 @@ async def test_add_tone_modal_filter_is_focused_on_mount():
     immediately."""
 ```
 
-- [ ] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Implement:
+- [x] Run to confirm they fail: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Implement:
   - Add an always-visible `Input` (id `add-tone-filter`) above the modal's `DataTable`,
     focused on mount. Extend the modal's `DEFAULT_CSS` to lay it out.
+    **Shipped:** the modal's `DataTable` gained an explicit id (`add-tone-table`) so
+    the mixin can address it; existing `query_one(DataTable)` call sites still work.
   - Mix in `FilterableTableMixin` with `filter_text = lambda tone: tone.name`,
     `filter_row_key = lambda tone: tone.tone_id`, single-column
     `filter_row = lambda tone, label: (label,)`.
@@ -455,8 +469,8 @@ async def test_add_tone_modal_filter_is_focused_on_mount():
     specific row must keep working and must dismiss with *that* row, not the top hit.
   - `escape` behavior: if the filter has text, clear it; if already empty, cancel the
     modal (`dismiss(None)`) as today (L65, L86-87).
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
-- [ ] Commit: `feat: fuzzy filter + enter-to-add in the add-tone modal (#10)`
+- [x] Run the tests and confirm they pass: `uv run pytest tests/screens/test_setlists.py -v`
+- [x] Commit: `feat: fuzzy filter + enter-to-add in the add-tone modal (#10)`
 
 ### Task 5: IR panes — one filter on the focused pane, retire positional row keys
 
@@ -471,7 +485,7 @@ L111) and device (id `irs-device-table`, L114). Both currently key rows by
 stored indices point at the wrong IR. Note the existing rename `Input` (id
 `irs-rename-input`, L116, hidden by default L124) is NOT the filter; do not reuse it.
 
-- [ ] Write the failing tests first in `tests/screens/test_irs.py`:
+- [x] Write the failing tests first in `tests/screens/test_irs.py`:
 
 ```python
 async def test_ir_filter_narrows_the_focused_pane_only():
@@ -503,8 +517,8 @@ async def test_ir_filter_clears_on_escape():
     """Escape clears a non-empty filter and restores the full pane."""
 ```
 
-- [ ] Run to confirm they fail: `uv run pytest tests/screens/test_irs.py -v`
-- [ ] Implement:
+- [x] Run to confirm they fail: `uv run pytest tests/screens/test_irs.py -v`
+- [x] Implement:
   - Add a single `Input` (id `irs-filter`), placed above the two panes. `/` focuses it
     (`Binding("slash", "focus_filter", "Filter", key_display="/")`); `escape` clears it.
     Note `escape` is already bound to `cancel_rename` (L99) — the handler must clear the
@@ -522,23 +536,27 @@ async def test_ir_filter_clears_on_escape():
     `DataTable`'s own uniqueness needs, but nothing may compute a backing index from them.
   - `filter_on_enter(ir)` moves the cursor to that IR only. `p` / `d` / `R` / `P` stay
     explicit keys — Enter must never mutate local or device state.
-- [ ] Run the tests and confirm they pass: `uv run pytest tests/screens/test_irs.py -v`
-- [ ] Run the full suite: `uv run pytest`
-- [ ] Commit: `feat: fuzzy filter on the IR panes, drop positional index lookups (#10)`
+- [x] Run the tests and confirm they pass: `uv run pytest tests/screens/test_irs.py -v`
+- [x] Run the full suite: `uv run pytest`
+- [x] Commit: `feat: fuzzy filter on the IR panes, drop positional index lookups (#10)`
 
 ### Task 6: User-facing surfaces + backlog bookkeeping
 
-- [ ] Update `src/helixgen_tui/widgets/help_overlay.py`. It currently says
+- [x] Update `src/helixgen_tui/widgets/help_overlay.py`. It currently says
       `/  Fuzzy-filter by name` (L28) under Library only. Make the `/` filter hint
       apply to every screen that now has one (Library, Setlists, IRs) and mention that
       Enter jumps to / acts on the best match. Keep the wording terse and consistent
       with the surrounding entries.
-- [ ] Update `README.md` key/tab tables so `/` is listed for the Setlists and IRs
+- [x] Update `README.md` key/tab tables so `/` is listed for the Setlists and IRs
       screens, and the add-tone modal's filter is mentioned.
-- [ ] Verify the key-hints footer (`src/helixgen_tui/widgets/status_footer.py`) shows
-      the new `/` binding on Setlists and IRs — the bindings added in Tasks 3 and 5
-      should surface automatically; if not, wire them.
-- [ ] Update `docs/BACKLOG.md`:
+- [x] Verify the key-hints footer shows the new `/` binding on Setlists and IRs.
+      **Finding:** the key hints come from Textual's `Footer` (composed in
+      `screens/base.py`), not `status_footer.py` (device state + last action only).
+      The Task 3/5 bindings carry no `show=False`, so they surface automatically —
+      no wiring needed. Locked in by a new regression test,
+      `test_filter_binding_is_advertised_on_every_filtered_screen` in
+      `tests/test_key_hints.py`.
+- [x] Update `docs/BACKLOG.md`:
   - Mark **#10** resolved: all four surfaces filtered, scored ranking, matched-character
     highlighting, enter-to-act. Note the date (2026-07-19) and this plan.
   - Update **#8(d)** — it says "the library filter matches name only ... the pickers/panes
@@ -547,8 +565,11 @@ async def test_ir_filter_clears_on_escape():
     (guitar / description / pack), (b) `BlockPickerModal` fuzzy filter — reuse
     `FilterableTableMixin`, (c) optional shared `ModalScreen` base, since `AddToneModal`
     and `BlockPickerModal` carry near-identical `DEFAULT_CSS`.
-- [ ] Run the full validation set (below) and confirm green.
-- [ ] Commit: `docs: record fuzzy-search rollout, close #10, file follow-ups`
+      **Shipped as entries #18 (multi-field match), #19 (`BlockPickerModal`
+      filter), #20 (shared picker `ModalScreen` base).**
+- [x] Run the full validation set (below) and confirm green. (`uv run pytest`
+      238 passed before the new footer test, 239 after; `uv run ruff check .` clean.)
+- [x] Commit: `docs: record fuzzy-search rollout, close #10, file follow-ups`
 
 ## Validation Commands
 

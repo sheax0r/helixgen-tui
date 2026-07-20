@@ -60,9 +60,10 @@ before any code.
   preserved only across same-setlist rebuilds);
   (b) device screen `r` retry needs a second press after reconnect under the
   production spawn (probe async, info refresh immediate); (c) format_device_text
-  substring heuristic is fragile; (d) library filter matches name only (the
-  match is now subsequence fuzzy, but still name-only; the pickers/panes have
-  no filter — see #10).
+  substring heuristic is fragile; (d) filters match name only — the pickers and
+  panes all gained filters in #10 (RESOLVED 2026-07-19) and matching is now
+  scored fuzzy, but every surface still matches the primary name text only;
+  multi-field matching is #18.
 
 ## 9. v0.1.1 residuals (from PR #14 review)
 
@@ -81,15 +82,23 @@ before any code.
   `IndexError` on a table/list mismatch instead of degrading to None —
   intentional fail-fast, noting the behavior change.
 
-## 10. Fuzzy search everywhere (user request, 2026-07-18)
+## 10. Fuzzy search everywhere (user request, 2026-07-18) — RESOLVED 2026-07-19
 
-Type part of a name to find/use the thing, wherever a list is presented:
-selecting a setlist, picking a tone in the add-tone modal, the library tone
-list, local/device IR panes. Today only the Library screen has a filter
-(`/`), it now matches a name-subsequence fuzzy filter (upgraded 2026-07-18,
-tui-polish plan Task 2; see #8), and the pickers/panes have none. Remaining
-wants: subsequence/trigram matching on the setlist / add-tone / IR panes too,
-highlight of matches, and enter-to-act on the top hit.
+Shipped in plan `docs/plans/completed/2026-07-19-fuzzy-search-everywhere.md` (branch
+`fuzzy-search-everywhere`): a scored matcher in `src/helixgen_tui/fuzzy.py`
+(pure, no Textual/Rich), a shared `FilterableTableMixin`
+(`src/helixgen_tui/screens/filterable.py`) wiring a filter `Input` to a
+`DataTable`, and rollout to all four surfaces — Library, the Setlists left
+pane, `AddToneModal`, and both IR panes (one filter, targeting the focused
+pane). Results re-sort best-first while a query is active, matched characters
+are highlighted, and `enter` acts on the top hit *without* mutating the device
+(Library/Setlists/IRs move the cursor only; the modal dismisses with the tone).
+The IR panes' positional `str(index)` row-key lookups were retired in favour of
+the mixin's `_visible` list.
+
+Original wants: type part of a name to find/use the thing, wherever a list is
+presented — setlist selection, the add-tone modal, the library tone list,
+local/device IR panes, with match highlighting and enter-to-act on the top hit.
 
 ## 11. Key-hints footer polish (from PR #16 review)
 
@@ -254,3 +263,76 @@ v2 makes editing the **currently-active** device tone propagate live:
   active-tone binding + edit-buffer sync plumbing that v1 has no equivalent of.
   Depends on nothing in core beyond what already ships (live verbs exist);
   purely TUI work.
+
+## 18. Multi-field fuzzy match (deferred from #10, 2026-07-19)
+
+Every filter shipped in #10 matches the surface's **primary name text only**.
+Wants: match (and highlight) additional fields — Library tone `guitar` and
+`description`, IR pack name / hash — so `strat` finds tones tagged with that
+guitar. Needs a decision on how a multi-field score combines (max-of-fields vs
+weighted sum) and where the highlight lands when the hit is not in the name
+column. `FilterableTableMixin` would grow a `filter_fields(item)` hook beside
+the existing `filter_text(item)`.
+
+## 21. Filter keystrokes do more work than they need to (review finding, 2026-07-19)
+
+Not a defect — no user-visible lag at present library/IR sizes — but two paths
+rebuild more than the keystroke changed:
+
+- `IrsScreen._on_filter_changed` calls `_rebuild_panes()`, which rebuilds
+  *both* panes. The inactive pane reports an empty query, so its rows are
+  byte-identical every time; only a focus switch can change them, and
+  `on_descendant_focus` already rebuilds for that. Could be
+  `self._active_pane().rebuild_filtered()`.
+- `SetlistsScreen._on_filter_changed` calls `_rebuild_tones_table()`, which does
+  one `library.get_tone()` per tone in the selected setlist, on every character
+  typed.
+- `FilterableTableMixin.rebuild_filtered` calls `filter_text(item)` twice per
+  item per keystroke (once to match, once to build the label).
+
+Worth revisiting if a large library ever makes typing feel sticky; measure
+before optimising.
+
+## 19. `BlockPickerModal` fuzzy filter (deferred from #10, 2026-07-19)
+
+`src/helixgen_tui/widgets/block_picker_modal.py` (tone editor
+category → model picker) is the one remaining unfiltered list surface. It was
+held back from #10 to keep that change scoped to the librarian screens.
+`FilterableTableMixin` fits it as-is: `filter_text` = the model name,
+`filter_on_enter` = dismiss with the picked model, same enter/escape contract
+as `AddToneModal`.
+
+## 20. Shared `ModalScreen` base for the pickers (2026-07-19)
+
+`AddToneModal` (`screens/setlists.py`) and `BlockPickerModal`
+(`widgets/block_picker_modal.py`) carry near-identical `DEFAULT_CSS`, compose
+shape (title + `DataTable`), and escape-cancel behavior — and after #19 they
+will share the filter wiring too. Factor out a common picker base so the layout
+and the escape/enter contract are defined once. Cosmetic/structural only; no
+behavior change intended.
+
+## 22. IR pane cursor can drift between identical rows (review finding, 2026-07-19)
+
+`_IrPane.filter_identity` (`screens/irs.py`) is `(name, pack, irhash)`, which is
+not a true primary key: an IR library can hold genuinely identical duplicate
+entries (`test_repeated_ir_instance_renders_as_two_rows` covers the rendering
+side). `move_cursor_to` returns the *first* match, so a cursor parked on the
+second duplicate snaps back to the first on any rebuild. The positional
+`_restore_cursor_key` this replaced preserved it, so it is a small regression —
+accepted because the rows are indistinguishable: both resolve to the same
+`push_ir(irhash or name)` / `delete_ir(name)` target, so no wrong device write
+is reachable. Fix if it ever becomes visible: have `move_cursor_to` prefer the
+candidate at or after the previous cursor row, or carry backing position in the
+identity for panes whose items can be fully identical.
+
+## 23. `_renamed_to` can be consumed by an unrelated refresh (review finding, 2026-07-19)
+
+`IrsScreen._restore_renamed_cursor` (`screens/irs.py`) stores the pending name at
+rename submit and clears it in whichever `_apply_device_irs` runs next. If an `r`
+or a `ScreenResume` refresh interleaves before the rename's own
+`RefreshDeviceIrsRequested` lands, that earlier refresh sees the pre-rename list,
+matches nothing, and clears the pending restore — leaving the cursor at row 0 on
+the real post-rename refresh. Same outcome when a live filter excludes the new
+name. Low likelihood and mitigated: `d` shows its plan in `ConfirmModal` before
+deleting anything. Fix: consume `_renamed_to` only on the `_apply_device_irs`
+triggered by `RefreshDeviceIrsRequested`, or leave it set until it matches.

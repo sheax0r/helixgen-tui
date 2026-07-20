@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.models import SetlistVM, SyncState, ToneVM
@@ -163,6 +164,149 @@ async def test_filter_matches_gappy_subsequence():
         assert "Foo Fighters - Everlong" in str(table.get_cell_at((0, 0)))
 
 
+_RANKING_TONES = [
+    # native order puts the gappy match first — ranking must reorder it below
+    # the contiguous one when "jcm" is typed.
+    ToneVM(
+        name="Jazz Chorus Mod",
+        tone_id="tone-jazz",
+        guitar="Strat",
+        description=None,
+        sync=SyncState.SYNCED,
+        setlists=(),
+    ),
+    ToneVM(
+        name="JCM800 Crunch",
+        tone_id="tone-jcm",
+        guitar="LP",
+        description=None,
+        sync=SyncState.SYNCED,
+        setlists=(),
+    ),
+]
+
+
+async def test_filter_ranks_best_match_first():
+    """With a query active, the best match is row 0 even if it is later in
+    native library order."""
+    app = HelixgenTuiApp(_core(tones=list(_RANKING_TONES)))
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        assert str(table.get_cell_at((0, 0))) == "Jazz Chorus Mod"
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        assert table.row_count == 2
+        assert str(table.get_cell_at((0, 0))) == "JCM800 Crunch"
+
+
+async def test_empty_filter_restores_native_order():
+    """Clearing the filter restores the library's own ordering, unsorted."""
+    app = HelixgenTuiApp(_core(tones=list(_RANKING_TONES)))
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        assert str(table.get_cell_at((0, 0))) == "JCM800 Crunch"
+        for _ in range(3):
+            await pilot.press("backspace")
+        assert [str(table.get_cell_at((row, 0))) for row in range(table.row_count)] == [
+            "Jazz Chorus Mod",
+            "JCM800 Crunch",
+        ]
+
+
+async def test_filter_highlights_matched_characters():
+    """The Tone cell for a filtered row is a rich Text whose matched character
+    positions carry the highlight style."""
+    from helixgen_tui.fuzzy import match
+    from helixgen_tui.screens.filterable import HIGHLIGHT_STYLE
+
+    app = HelixgenTuiApp(_core(tones=list(_RANKING_TONES)))
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        label = table.get_cell_at((0, 0))
+        assert str(label) == "JCM800 Crunch"
+        highlighted = {
+            offset
+            for span in label.spans
+            if span.style == HIGHLIGHT_STYLE
+            for offset in range(span.start, span.end)
+        }
+        expected = match("jcm", "JCM800 Crunch")
+        assert expected is not None
+        assert highlighted == set(expected.indices)
+
+
+async def test_enter_on_filter_moves_cursor_to_top_hit_without_activating():
+    """Enter in the filter input moves the table cursor to the top hit and does
+    NOT call the device service (no activate, no sync)."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert table.cursor_row == 0
+        assert str(table.get_cell_at((table.cursor_row, 0))) == "JCM800 Crunch"
+        assert port.calls == []
+        assert isinstance(app.screen, LibraryScreen)
+
+
+async def test_enter_on_filter_parks_on_the_cursor_row_and_refocuses_the_table():
+    """Enter acts on the row the user is *on*, not on ``_visible[0]``, and hands
+    focus back to the table.
+
+    The cursor is moved off the top hit first: without that, "acts on the
+    highlighted row" and "jumps to the top hit" are indistinguishable, and a
+    ``move_cursor_to`` that no-ops passes either way. The focus half is what
+    makes Enter more than a no-op — the following ``s`` has to reach the screen
+    binding rather than being typed into the Input."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        filter_input = app.screen.query_one(Input)
+        await pilot.press("/")
+        for char in "jcm":
+            await pilot.press(char)
+        assert table.row_count == 2
+        # Off the top hit, onto the gappy match ranked below it.
+        table.move_cursor(row=1)
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert table.cursor_row == 1
+        assert str(table.get_cell_at((table.cursor_row, 0))) == "Jazz Chorus Mod"
+        assert table.has_focus
+        # Enter itself never mutates, and the query stays live to arrow through.
+        assert port.calls == []
+        assert filter_input.value == "jcm"
+        assert table.row_count == 2
+
+        await pilot.press("s")
+        await pilot.pause()
+        assert ("sync_tone", ("tone-jazz",)) in port.calls
+
+
 async def test_escape_clears_filter():
     app = HelixgenTuiApp(_core())
     async with app.run_test() as pilot:
@@ -175,6 +319,34 @@ async def test_escape_clears_filter():
         filter_input = app.screen.query_one(Input)
         assert filter_input.value == ""
         assert table.row_count == 3
+
+
+async def test_escape_on_empty_filter_hands_focus_back_to_the_table():
+    """Escape from an empty input still releases focus. Textual's Input eats
+    every printable key before screen bindings run, so returning early there
+    would strand the user: no tab switch, no activate, no help overlay."""
+    app = HelixgenTuiApp(_core())
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        filter_input = app.screen.query_one(Input)
+        await pilot.press("/")
+        assert filter_input.has_focus
+        await pilot.press("escape")
+        assert table.has_focus
+        # The keys that were dead while the input held focus now reach bindings.
+        await pilot.press("?")
+        assert filter_input.value == ""
+
+
+async def test_escape_on_the_table_with_no_filter_is_a_no_op():
+    app = HelixgenTuiApp(_core())
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        assert table.has_focus
+        assert isinstance(app.screen, LibraryScreen)
 
 
 async def test_refresh_picks_up_newly_appended_tone():
@@ -353,6 +525,31 @@ async def test_make_active_local_only_confirms_then_installs_then_activates():
         )
 
 
+async def test_make_active_re_reads_sync_state_instead_of_the_cached_row():
+    """`s` installs a tone but nothing refreshes the screen, so the cached
+    ToneVM still reads LOCAL_ONLY. `a` must re-read the library rather than
+    confirm-and-sync a tone that is already on the device."""
+    port = FakeDevicePort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("down")  # row 1 = Foo Fighters (LOCAL_ONLY, tone-2)
+        await pilot.press("s")
+        await pilot.pause()
+        assert ("sync_tone", ("tone-2",)) in port.calls
+        # Stand in for the observation file a real sync writes: the library now
+        # reports SYNCED while the table's snapshot still says LOCAL_ONLY.
+        library = app.core.library
+        index = library.tones.index(next(t for t in library.tones if t.tone_id == "tone-2"))
+        library.tones[index] = replace(library.tones[index], sync=SyncState.SYNCED)
+
+        port.calls.clear()
+        await pilot.press("a")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal)
+        assert ("make_active", ("tone-2",)) in port.calls
+        assert ("sync_tone", ("tone-2",)) not in port.calls
+
+
 async def test_make_active_local_only_cancel_makes_no_calls():
     port = FakeDevicePort(state=_CONNECTED)
     app = _device_app(port)
@@ -491,3 +688,101 @@ async def test_bracketed_tone_name_renders_literally_no_crash():
         assert table.row_count == 1
         assert str(table.get_cell_at((0, 0))) == "Bad [/] name"
         assert str(table.get_cell_at((0, 1))) == "[reverb]"
+
+
+async def test_enter_on_a_no_match_filter_does_not_activate_or_crash():
+    """The mixin's empty-_visible guard: Enter in the *filter input* (not the
+    table) with nothing matching must be a no-op, not an IndexError."""
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        for char in "zzzz":
+            await pilot.press(char)
+        await pilot.pause()
+        assert table.row_count == 0
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert port.calls == []
+        assert isinstance(app.screen, LibraryScreen)
+
+
+async def test_enter_on_an_empty_filter_does_not_activate():
+    port = FakeDevicePort(state=_CONNECTED)
+    core = FakeCore(
+        tones=list(_RANKING_TONES),
+        setlists=[SetlistVM(name="Gig 1", sync_enabled=True, tones=())],
+        device=port,
+    )
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await pilot.press("/")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert port.calls == []
+        assert isinstance(app.screen, LibraryScreen)
+
+
+async def test_refresh_while_filtered_keeps_the_cursor_where_the_user_parked_it():
+    """A rebuild the user did not trigger by typing must not re-target the
+    selection to the top hit — the next `s`/`a` would then act on a row they
+    never chose."""
+    core = _core()
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        await pilot.press("e")  # matches more than one tone
+        assert table.row_count > 1
+
+        table.focus()
+        await pilot.press("down")
+        parked = table.cursor_row
+        assert parked != 0
+        parked_name = str(table.get_cell_at(Coordinate(parked, 0)))
+
+        await pilot.press("r")  # refresh: a rebuild that is not a query change
+        assert table.cursor_row == parked
+        assert str(table.get_cell_at(Coordinate(table.cursor_row, 0))) == parked_name
+
+
+async def test_cursor_survives_a_sync_state_flip_under_a_live_filter():
+    """The cursor is restored by tone_id, not by ToneVM value equality: a sync
+    rewrites the item under the cursor, and equality would silently drop the
+    selection to row 0."""
+    core = _core()
+    app = HelixgenTuiApp(core)
+    async with app.run_test() as pilot:
+        table = app.screen.query_one(DataTable)
+        await pilot.press("/")
+        await pilot.press("e")
+        table.focus()
+        await pilot.press("down")
+        parked = table.cursor_row
+        selected = app.screen.selected()
+        assert selected is not None
+
+        # Same tone, different sync state — what a completed sync produces.
+        core.library.tones = [
+            ToneVM(
+                name=tone.name,
+                tone_id=tone.tone_id,
+                guitar=tone.guitar,
+                description=tone.description,
+                sync=SyncState.SYNCED,
+                setlists=tone.setlists,
+            )
+            for tone in core.library.tones
+        ]
+        app.screen.refresh_tones()
+
+        assert table.cursor_row == parked
+        assert app.screen.selected().tone_id == selected.tone_id
