@@ -281,6 +281,10 @@ class IrsScreen(LibrarianScreen):
         if not result.ok or result.value is None:
             self._device_irs = []
             self._device_pane.rebuild_filtered()
+            # Drop any pending rename target too: the list it referred to is
+            # gone, and leaving it set would park the cursor on that IR at some
+            # arbitrary later refresh the user never connected to the rename.
+            self._restore_renamed_cursor()
             had_focus = table.has_focus
             table.display = False
             placeholder.display = True

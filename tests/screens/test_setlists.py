@@ -882,20 +882,40 @@ async def test_escape_inside_an_empty_filter_hands_the_setlists_pane_back():
         assert app.screen.query_one("#setlists-table", DataTable).has_focus
 
 
-async def test_escape_with_a_live_filter_still_returns_to_the_setlists_pane():
+async def test_escape_with_a_live_filter_returns_to_the_setlists_pane():
     app = _app()
     async with app.run_test() as pilot:
         await _goto_setlists(pilot)
         filter_input = app.screen.query_one("#setlists-filter", Input)
         filter_input.value = "gig 2"
         await pilot.pause()
-        app.screen.query_one("#setlist-tones-table", DataTable).focus()
+        filter_input.focus()
         await pilot.pause()
 
         await pilot.press("escape")
         await pilot.pause()
         assert filter_input.value == ""
         assert app.screen.query_one("#setlists-table", DataTable).has_focus
+
+
+async def test_escape_clears_a_live_filter_without_leaving_the_tones_pane():
+    """The no-yank rule holds with a query live, not just without one. Stealing
+    focus here moves the setlists cursor under the user, so a later `d`/`J`/`K`
+    would act against a setlist they never chose."""
+    app = _app()
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        filter_input = app.screen.query_one("#setlists-filter", Input)
+        filter_input.value = "gig 2"
+        await pilot.pause()
+        tones_table = app.screen.query_one("#setlist-tones-table", DataTable)
+        tones_table.focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert filter_input.value == ""
+        assert tones_table.has_focus
 
 
 async def test_enter_on_an_empty_setlists_filter_does_not_sync():

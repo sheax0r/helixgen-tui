@@ -262,18 +262,19 @@ class SetlistsScreen(FilterableTableMixin, LibrarianScreen):
         self.query_one(f"#{_FILTER_ID}", Input).focus()
 
     def action_clear_filter(self) -> None:
-        """Escape drops a live query and returns to the setlists pane. With no
-        query it still unwinds focus, but only from the filter input itself —
-        escape pressed on the tones pane must not yank focus mid-reorder, while
-        escape inside an empty input has to hand the pane back or the input
-        swallows every printable key and the screen bindings go dead."""
+        """Escape drops a live query and returns to the setlists pane. Focus
+        unwinds from the filter input but never off the tones pane — escape
+        pressed there must not yank focus mid-reorder, whether or not a query
+        is live, or the setlists cursor moves under the user and a later
+        `d`/`J`/`K` acts against a setlist they never chose. Escape inside the
+        input has to hand the pane back either way, or the input swallows every
+        printable key and the screen bindings go dead."""
         filter_input = self.query_one(f"#{_FILTER_ID}", Input)
         setlist_table = self.query_one(f"#{_SETLIST_TABLE_ID}", DataTable)
+        tones_table = self.query_one(f"#{_TONES_TABLE_ID}", DataTable)
         if filter_input.value:
             filter_input.value = ""  # triggers Input.Changed -> rebuild
-            setlist_table.focus()
-            return
-        if filter_input.has_focus:
+        if not tones_table.has_focus:
             setlist_table.focus()
 
     @on(Input.Changed, f"#{_FILTER_ID}")

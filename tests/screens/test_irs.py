@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from helixgen_tui.app import HelixgenTuiApp
+from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
@@ -764,3 +765,21 @@ async def test_local_cursor_follows_the_ir_across_a_refresh_that_drops_an_earlie
         await pilot.pause()
 
         assert app.screen._selected_local_ir().name == "JCM800 Cab"
+
+
+async def test_a_failed_device_refresh_drops_the_pending_rename_target():
+    """The rename target is consumed by the refresh that follows the rename. If
+    that refresh fails, the target must die with it — otherwise it survives to
+    park the device cursor at some arbitrary later refresh the user never
+    connected to the rename."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        screen = app.screen
+        screen._renamed_to = "Renamed"
+
+        screen._apply_device_irs(QueryResult(ok=False, value=None, message="boom"))
+        await pilot.pause()
+
+        assert screen._renamed_to is None
+        assert screen.query_one("#irs-device-table", DataTable).display is False
