@@ -84,17 +84,21 @@ it is the reference implementation of this safety model).
 
 ### Task 3: Mutating verb coverage, `HGTEST`-scoped
 
-- [ ] Cover the mutating verbs with `HGTEST`-prefixed artifacts and finalizer
+- [x] Cover the mutating verbs with `HGTEST`-prefixed artifacts and finalizer
       teardown: `sync_tone`, `sync_setlist`, `sync_all` (scoped so it cannot
       touch untracked device presets — sync is a managed-set mirror; confirm that
       property holds in the assertions), `delete_tone`, `push_ir`, `rename_ir`,
       `delete_ir`, `prune_irs`, `backup`
-- [ ] `make_active` changes the player's ACTIVE tone by design: cover it, but
+      (`sync_all` covered with `gc=False` only — the GC phase would delete real
+      unreferenced pool presets invisibly to the state guard; `prune_irs` gated
+      on the engine's dry-run plan so it only ever executes over its own HGTEST
+      orphan — both stated in the conftest docstring)
+- [x] `make_active` changes the player's ACTIVE tone by design: cover it, but
       capture the active preset first and restore it at teardown
-- [ ] **Exclude `restore`** from live writes (it overwrites an existing preset;
+- [x] **Exclude `restore`** from live writes (it overwrites an existing preset;
       core's live suite excludes it for the same reason) and assert only its
       unsupported/plan paths. State the exclusion in the conftest docstring
-- [ ] Assert `OpResult.ok` **and** the message text the TUI footer shows — a verb
+- [x] Assert `OpResult.ok` **and** the message text the TUI footer shows — a verb
       that fails soft with `ok=False` is exactly the silent breakage this suite
       exists to catch
 

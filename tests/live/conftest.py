@@ -78,6 +78,15 @@ Deliberately excluded verbs (and why)
 * ``restore`` — it overwrites an existing preset's content in place; there is
   no ``HGTEST``-scoped way to exercise it (helixgen-core's live suite excludes
   it for the same reason). Only its unsupported/plan paths are asserted.
+* ``sync_all(gc=True)`` — the GC phase (which only runs on the all-setlists
+  sync) deletes device pool presets the manifest doesn't reference; against
+  this suite's SCRATCH manifest that means any unreferenced real pool preset,
+  and the pool container (``-2``) can't be listed, so the session state guard
+  could not even detect the damage. ``sync_all`` is covered with ``gc=False``
+  only (helixgen-core's live suite excludes ``sync --gc`` for the same
+  reason). ``prune_irs`` — a real deletion too — stays in, but gated on the
+  engine's own dry-run plan: it executes only when the sole orphan is the
+  test's own ``HGTEST`` IR.
 """
 
 from __future__ import annotations
