@@ -66,19 +66,21 @@ it is the reference implementation of this safety model).
 
 ### Task 2: Read-only verb coverage
 
-- [ ] Cover the read/status verbs against hardware: `probe`, `info`,
+- [x] Cover the read/status verbs against hardware: `probe`, `info`,
       `list_device_irs`, `lock_status`, and the plan-only verbs
       (`plan_sync_all`, `plan_delete_tone`, `plan_delete_ir`, `plan_prune_irs`,
       `plan_restore`) — asserting the **shapes the TUI consumes**
       (`DeviceStateVM`, `IrVM`, `MutationPlan`, `OpResult`), not just non-crash
-- [ ] Cover the offline-first hinge on real hardware conditions: with no device
+- [x] Cover the offline-first hinge on real hardware conditions: with no device
       configured, `probe` raises `DeviceUnreachable` immediately and without a
       socket; with a device configured but unreachable (e.g. a bogus port), the
       failure maps to `DeviceUnreachable` rather than escaping raw
-- [ ] Record any mismatch between what `RealDevicePort` expects and what the
+- [x] Record any mismatch between what `RealDevicePort` expects and what the
       installed helixgen 0.30.0 actually returns. Engine-side gaps go to the
       **core** backlog (`helixgen-core/docs/BACKLOG.md`) — note them in this
       repo's findings doc and do not patch engine behavior here
+      (2026-07-27 hardware run: 13/13 passed against Stadium XL fw 1.3.2 —
+      NO mismatches found in the read/status/plan verbs; nothing to file)
 
 ### Task 3: Mutating verb coverage, `HGTEST`-scoped
 
