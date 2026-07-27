@@ -42,11 +42,23 @@ def tmp_home(tmp_path, monkeypatch):
 
 
 def _snapshot_real_home() -> dict[str, float] | None:
-    """Read-only: file list + mtimes of ~/.helixgen, or None if it doesn't exist."""
+    """Read-only: file list + mtimes of ~/.helixgen, or None if it doesn't exist.
+
+    The ``locks/`` subtree is excluded: helixgen's advisory device leases are
+    ephemeral cross-process coordination files, and the live suite
+    (``tests/live/``) deliberately keeps its lock root REAL so other helixgen
+    processes on this machine serialize against it — lease churn there is
+    expected, not a state leak.
+    """
     real_home = pathlib.Path.home() / ".helixgen"
     if not real_home.exists():
         return None
-    return {str(p): p.stat().st_mtime for p in real_home.rglob("*")}
+    locks = real_home / "locks"
+    return {
+        str(p): p.stat().st_mtime
+        for p in real_home.rglob("*")
+        if locks not in p.parents and p != locks
+    }
 
 
 @pytest.fixture(autouse=True, scope="session")

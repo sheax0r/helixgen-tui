@@ -52,6 +52,9 @@ include = ["helixgen_tui*"]
 testpaths = ["tests"]
 addopts = "-ra"
 asyncio_mode = "auto"
+markers = [
+    "live: opt-in live device suite (tests/live) — requires HELIXGEN_TUI_LIVE=1",
+]
 
 [tool.ruff]
 line-length = 100

@@ -44,25 +44,25 @@ deferred work filed as a numbered `docs/BACKLOG.md` entry.
 Model the safety fixtures on helixgen-core's `tests/live/conftest.py` (read it —
 it is the reference implementation of this safety model).
 
-- [ ] Add `tests/live/` with a `conftest.py` whose module docstring states the
+- [x] Add `tests/live/` with a `conftest.py` whose module docstring states the
       full safety model, the gating, and any deliberately excluded verb (and why)
-- [ ] Gate everything behind `HELIXGEN_TUI_LIVE=1` **plus** a cheap TCP
+- [x] Gate everything behind `HELIXGEN_TUI_LIVE=1` **plus** a cheap TCP
       reachability probe of the device's ZMQ ROUTER port (the Stadium ignores
       ICMP, so ping is useless). Without both, every test skips — the default
       `pytest` run and CI must stay green and offline
-- [ ] Register a `live` marker in `pyproject.toml` and keep it out of the default
+- [x] Register a `live` marker in `pyproject.toml` and keep it out of the default
       `testpaths` run, or make the gate a hard skip — whichever keeps a plain
       `pytest` invocation on a dev machine with a device on the LAN from firing
       device writes by accident. State the choice in the docstring
-- [ ] Redirect ALL local helixgen state to a session scratch dir
+- [x] Redirect ALL local helixgen state to a session scratch dir
       (`HELIXGEN_SETLISTS`, `HELIXGEN_IRS`, `HELIXGEN_IRHASH_CACHE`,
       `HELIXGEN_PREFS`, device backups); leave `HELIXGEN_LIBRARY` pointing at the
       real block library read-only, skipping if it is absent
-- [ ] Take an upfront `device backup` (to scratch) before the first device test
-- [ ] Capture device state (presets / setlists / IRs) before the first device
+- [x] Take an upfront `device backup` (to scratch) before the first device test
+- [x] Capture device state (presets / setlists / IRs) before the first device
       test and re-capture at session teardown; **fail the session** if the
       normalized state changed. Document known blind spots honestly
-- [ ] Verify at teardown that the user's real `~/.helixgen` files are unchanged
+- [x] Verify at teardown that the user's real `~/.helixgen` files are unchanged
 
 ### Task 2: Read-only verb coverage
 
