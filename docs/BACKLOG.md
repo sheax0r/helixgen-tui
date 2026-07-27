@@ -336,3 +336,21 @@ the real post-rename refresh. Same outcome when a live filter excludes the new
 name. Low likelihood and mitigated: `d` shows its plan in `ConfirmModal` before
 deleting anything. Fix: consume `_renamed_to` only on the `_apply_device_irs`
 triggered by `RefreshDeviceIrsRequested`, or leave it set until it matches.
+
+## 24. Adopt ruff 0.16's broadened default rule set (2026-07-27)
+
+CI installed ruff unpinned, so lint was a moving target: ruff 0.16.0 broadened
+its defaults and turned `main` red with **65 findings** — none from any change
+in flight. Counts at the time: 14 `RUF059` (unused unpacked variable), 13
+`I001` (unsorted imports), 12 `RUF012` (mutable class default), 9 `BLE001`
+(blind except), 6 `RUF100` (unused noqa), 5 `UP035`, plus `PLR0402`, `FURB167`,
+`S110`, `S112`, `UP033`. The repo is clean under ruff ≤ 0.15.0, so CI is now
+pinned to `ruff==0.15.0` (`.github/workflows/ci.yml`) — a red lint means this
+branch broke something, not that upstream shipped a release.
+
+Work when picked up: `ruff check --fix` clears 28 mechanically (imports, unused
+noqa, deprecated imports); the rest need judgment. `BLE001` is the interesting
+one — `RealDevicePort._op` catches broad on purpose (it fails soft to
+`OpResult(ok=False)` for the footer), so those want a targeted `noqa` with the
+reason, not a narrowed except. `RUF012` wants `ClassVar` annotations on Textual
+`BINDINGS`/`CSS` class attributes. Then unpin, or bump the pin deliberately.
