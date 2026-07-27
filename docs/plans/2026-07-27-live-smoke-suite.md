@@ -39,7 +39,7 @@ deferred work filed as a numbered `docs/BACKLOG.md` entry.
   everything down in finalizers (including on failure), and never leave the
   device in a broken state.
 
-## Task 1: Suite skeleton, gating, and safety fixtures
+### Task 1: Suite skeleton, gating, and safety fixtures
 
 Model the safety fixtures on helixgen-core's `tests/live/conftest.py` (read it —
 it is the reference implementation of this safety model).
@@ -64,7 +64,7 @@ it is the reference implementation of this safety model).
       normalized state changed. Document known blind spots honestly
 - [ ] Verify at teardown that the user's real `~/.helixgen` files are unchanged
 
-## Task 2: Read-only verb coverage
+### Task 2: Read-only verb coverage
 
 - [ ] Cover the read/status verbs against hardware: `probe`, `info`,
       `list_device_irs`, `lock_status`, and the plan-only verbs
@@ -80,7 +80,7 @@ it is the reference implementation of this safety model).
       **core** backlog (`helixgen-core/docs/BACKLOG.md`) — note them in this
       repo's findings doc and do not patch engine behavior here
 
-## Task 3: Mutating verb coverage, `HGTEST`-scoped
+### Task 3: Mutating verb coverage, `HGTEST`-scoped
 
 - [ ] Cover the mutating verbs with `HGTEST`-prefixed artifacts and finalizer
       teardown: `sync_tone`, `sync_setlist`, `sync_all` (scoped so it cannot
@@ -96,7 +96,7 @@ it is the reference implementation of this safety model).
       that fails soft with `ok=False` is exactly the silent breakage this suite
       exists to catch
 
-## Task 4: Run it on hardware and act on the results
+### Task 4: Run it on hardware and act on the results
 
 - [ ] Run the suite against the device and record the verbatim result
 - [ ] Fix TUI-side defects under TDD (offline failing test first wherever the
@@ -108,7 +108,7 @@ it is the reference implementation of this safety model).
 - [ ] Re-run until the suite passes or every remaining failure is an explicitly
       filed engine gap
 
-## Task 5: Docs and backlog
+### Task 5: Docs and backlog
 
 - [ ] Write `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`: what the
       suite covers, the safety model, what is deliberately excluded, the hardware
