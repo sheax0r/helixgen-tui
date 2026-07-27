@@ -125,13 +125,41 @@ def test_push_ir_resolves_registered_ir_by_stem(tmp_home, tmp_path, monkeypatch)
     def fake_upload(ip, hashes):
         captured["ip"] = ip
         captured["hashes"] = list(hashes)
-        return [{"outcome": "uploaded"}]
+        return [{"ok": True, "outcome": "imported"}]
 
     monkeypatch.setattr(ir_upload, "upload_missing_irs", fake_upload)
 
     result = build_core().device.push_ir("V30 Cab")  # the stem, as the screen sends
     assert result.ok is True
     assert captured["hashes"] == [irhash]
+
+
+def test_push_ir_engine_soft_failure_flips_ok_false(tmp_home, tmp_path, monkeypatch):
+    """The engine's upload result carries per-hash ``ok`` (True only for
+    outcomes "already"/"imported"). A soft failure like "upload_failed" or
+    "not_yet_registered" has no "upload_error" outcome but is NOT a success —
+    push_ir must report ok=False and surface the engine's note, not claim
+    the push worked (found live 2026-07-27: every soft failure reported ok)."""
+    import helixgen.device.ir_upload as ir_upload
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _register_ir(tmp_path)
+
+    for outcome, note in [
+        ("upload_failed", "failed to upload V30 Cab.wav"),
+        ("not_yet_registered", "uploaded but not yet registered — retry shortly"),
+        ("hash_mismatch", "registered under a different hash — cab won't resolve"),
+    ]:
+        monkeypatch.setattr(
+            ir_upload,
+            "upload_missing_irs",
+            lambda ip, hashes, _o=outcome, _n=note: [
+                {"ok": False, "outcome": _o, "note": _n}
+            ],
+        )
+        result = build_core().device.push_ir("V30 Cab")
+        assert result.ok is False, f"outcome {outcome!r} must not report success"
+        assert note in result.message
 
 
 def test_push_ir_unknown_ir_is_soft_failure(tmp_home, monkeypatch):

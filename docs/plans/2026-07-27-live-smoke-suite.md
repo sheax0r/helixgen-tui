@@ -104,14 +104,37 @@ it is the reference implementation of this safety model).
 
 ### Task 4: Run it on hardware and act on the results
 
-- [ ] Run the suite against the device and record the verbatim result
-- [ ] Fix TUI-side defects under TDD (offline failing test first wherever the
+- [x] Run the suite against the device and record the verbatim result
+      (2026-07-27, Stadium XL fw 1.3.2 b1340 — first full run: `8 failed,
+      13 passed, 1 error in 223.62s` — all failures a mid-run device network
+      drop (Stadium flakiness, port 2002 stopped answering ~1 min; device
+      clean on recovery, no HGTEST leftovers, no stale locks). Second run:
+      `2 failed, 19 passed in 396.54s` — both IR tests, real defects below.
+      Final run: `20 passed, 1 skipped in 371.55s` — the skip is the prune
+      test's own safety gate: the device has real non-HGTEST orphan IRs, so
+      it refuses to execute a real prune over them, by design)
+- [x] Fix TUI-side defects under TDD (offline failing test first wherever the
       defect is reachable with `FakeDevicePort`; the live test is the backstop,
       not the primary regression net)
-- [ ] File engine-side defects as numbered entries in the **core** backlog, and
+      (one found: `RealDevicePort.push_ir` treated every engine outcome except
+      `upload_error` as success — soft failures (`upload_failed`,
+      `not_yet_registered`, `hash_mismatch`, `not_found_locally`) reported
+      `ok=True`. Not reachable via `FakeDevicePort` (defect is in the real
+      port's engine-result mapping) — offline failing test added directly
+      against the port with the upload monkeypatched:
+      `test_push_ir_engine_soft_failure_flips_ok_false`. Fix: trust the
+      engine's per-hash `ok` and surface its `note` in the footer message)
+- [x] File engine-side defects as numbered entries in the **core** backlog, and
       list them in this repo's `docs/BACKLOG.md` #5 close-out note so the
       cross-repo dependency is visible
-- [ ] Re-run until the suite passes or every remaining failure is an explicitly
+      (one engine gap found, nothing to file: on helixgen ≤0.30 a pushed IR
+      is registered (hash→path resolves, `/addContent` seen) but NEVER
+      appears in the -11 `list-irs` listing — reproduced by hand on hardware.
+      Already fixed upstream as core #38 in 0.31.0 (hardware-validated
+      2026-07-27, listing-cache nudge in `push_ir`). Action here: engine pin
+      bumped to `helixgen[device]>=0.31`, lock upgraded to 0.32.0; Task 5's
+      close-out note will reference core #38)
+- [x] Re-run until the suite passes or every remaining failure is an explicitly
       filed engine gap
 
 ### Task 5: Docs and backlog

@@ -20,7 +20,9 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "helixgen[device]>=0.26",
+    # >=0.31: push-ir heals the device's -11 IR listing cache (core #38) —
+    # on older engines a pushed IR never appears in list-irs
+    "helixgen[device]>=0.31",
     "textual>=8,<9",
 ]
 
