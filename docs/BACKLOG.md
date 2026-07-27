@@ -28,11 +28,15 @@ before any code.
   D4-modal permission bridging, graceful degradation, library refresh) are
   settled in the v1 design spec's "first post-v1 screen" section; binding
   choice (Agent SDK vs headless CLI) deferred to build time.
-- **#5 Live smoke suite (`HELIXGEN_TUI_LIVE=1`)** — deferred per spec D6;
-  validate `RealDevicePort` verbs on hardware. The v1 build's device tests
-  are entirely `FakeDevicePort`-driven (no real hardware in CI or dev); this
-  entry tracks writing an opt-in, env-gated suite that exercises the real
-  port's per-verb delegations against an actual Helix Stadium.
+- ✅ **#5 Live smoke suite (`HELIXGEN_TUI_LIVE=1`)** — shipped 2026-07-27:
+  `tests/live/` runs `RealDevicePort`'s verbs against real hardware behind an
+  env gate + TCP probe + full safety chain (scratch state redirect, upfront
+  backup, session state guard, `HGTEST`-only artifacts). Hardware-validated on
+  a Stadium XL (fw 1.3.2): final run 20 passed / 1 skipped (prune safety gate,
+  by design). Found and fixed one TUI defect (`push_ir` reported `ok=True` on
+  engine soft failures); one engine gap was already fixed upstream as core #38
+  (helixgen 0.31, engine pin bumped to `>=0.31` — nothing new filed). Findings
+  doc: `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
 - **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
   push** — `RealDevicePort` returns `ok=False` for these; the engine change
   lands in helixgen-core first (ref #3's stable-API ask).

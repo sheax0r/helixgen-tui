@@ -30,6 +30,16 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 - **Design docs + plans** live in `docs/superpowers/specs/` and `docs/superpowers/plans/`, same shape as helixgen-core.
 - **Backlog discipline.** `docs/BACKLOG.md` = this repo's single backlog.
 - TDD throughout: failing test first, then minimal implementation.
+- **Live device suite (`tests/live/`) is opt-in.** Default `pytest` run and CI
+  hard-skip it at collection — green, offline, no device writes possible. To run
+  against real hardware: `HELIXGEN_TUI_LIVE=1 python3 -m pytest tests/live -q`
+  (device tests also need the Stadium's ZMQ port 2002 TCP-reachable;
+  `HELIXGEN_HELIX_IP` overrides the persisted device record). Safety posture:
+  all local helixgen state redirected to scratch, upfront device backup,
+  session-failing device state guard, `HGTEST`-prefixed artifacts only, session
+  `all` advisory lease held for the run. Normative details + exclusions
+  (`restore`, `sync_all(gc=True)`): `tests/live/conftest.py` docstring; findings:
+  `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
 - **Never commit paid IR packs or personal device exports** (user rule from core; applies here if fixtures ever creep in).
 
 ## ralphex

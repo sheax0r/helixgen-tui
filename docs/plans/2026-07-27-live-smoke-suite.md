@@ -139,15 +139,19 @@ it is the reference implementation of this safety model).
 
 ### Task 5: Docs and backlog
 
-- [ ] Write `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`: what the
+- [x] Write `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`: what the
       suite covers, the safety model, what is deliberately excluded, the hardware
       run's verbatim results, and every defect found
-- [ ] `docs/BACKLOG.md`: close **#5** with a one-line note pointing at the
+- [x] `docs/BACKLOG.md`: close **#5** with a one-line note pointing at the
       findings doc — or rewrite it to say precisely what remains
-- [ ] `CLAUDE.md`: document how to run the live suite (env vars, gating,
+      (closed with the ✅ note: hardware-validated, push_ir fix, core #38
+      reference, findings-doc pointer)
+- [x] `CLAUDE.md`: document how to run the live suite (env vars, gating,
       safety posture) next to the existing test guidance
-- [ ] Confirm the default offline suite is still green and still skips
+- [x] Confirm the default offline suite is still green and still skips
       everything under `tests/live/`
+      (2026-07-27: `274 passed, 21 skipped` — all 21 skips are `tests/live/`
+      opt-in gates; `ruff check .` clean)
 
 ## Validation Commands
 
