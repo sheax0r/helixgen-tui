@@ -130,8 +130,7 @@ IR verbs satisfied while lying about (or discarding) the engine's report:
   `prune_irs()` went on to delete every orphan for real. The live run's own
   log proves the skew was reproducible: the prune test skipped *because the
   device had real non-HGTEST orphans* at the same moment the plan reported
-  none. Fixed, plus: the plan now surfaces the engine's `warnings`, a
-  planning abort is reported as itself instead of as "device unreachable",
+  none. Fixed, plus: the plan now surfaces the engine's `warnings`,
   `test_plan_prune_irs_matches_engine_cli` cross-checks the plan against
   `device ir-prune --json` (the pattern `test_list_device_irs_matches_engine_cli`
   already used), and offline unit tests pin the report shape.
@@ -150,6 +149,34 @@ state-diff normalizer no longer risks a `TypeError` on rows with missing keys;
 `_live_env` fails fast below helixgen 0.31 instead of presenting core #38 as a
 TUI regression; the session lease is no longer taken against a fabricated
 `no-device` address and its TTL is sized to the run (30 min, not 2 h).
+
+### Found in the second review pass (2026-07-27)
+
+- **A `plan_prune_irs` failure was still confirmable.** The first pass made the
+  plan *say* why planning failed, but it still returned a `MutationPlan` — so
+  `ConfirmModal` opened on a destructive prune with the failure text where the
+  delete list belongs, and `y` ran the prune anyway. The plan now RAISES:
+  `DeviceService.query` already turns that into a reported failure with no
+  modal (`screens/irs.py:407`), which is both the correct behavior and less
+  code.
+- **`prune_irs`' aborts were reported as "device offline".** `ir_prune`
+  connects itself (no `_session`), and `_op` maps every `HelixError` to
+  `DeviceUnreachable` — so the engine's re-scan/pool-cross-check abort (its
+  likeliest failure, on a perfectly healthy device, with nothing deleted)
+  flipped the whole app offline. `prune_irs` now catches `HelixError` and
+  reports `prune aborted: <engine message>`.
+- **`delete_ir` discarded `file_removed`.** The registry delete can succeed
+  while the SFTP file removal fails — precisely the wedged state the engine
+  needs `--force-wedge` to clean — and that was reported as a clean delete.
+  The message now names it.
+- **The suite's session lease could land in an unread lock root.** The engine
+  derives `locks/` from `$HELIXGEN_HOME`; `tests/live/conftest.py` hardcoded
+  `~/.helixgen/locks`, so on a machine with a custom home the run's exclusion
+  guarantee silently did nothing. `_REAL_HELIXGEN` now resolves `$HELIXGEN_HOME`
+  at import (before the scratch redirect), the same way the engine does.
+- **Version bump was half-applied** (`pyproject.toml` 0.3.1,
+  `__init__.py` 0.3.0), so `test_version_matches_installed_metadata` — and CI —
+  was red on the branch.
 
 **Correction to the safety model as first documented:** the state guard was
 described as blind to the preset pool. It is not — `device list --json`

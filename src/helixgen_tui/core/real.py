@@ -318,61 +318,61 @@ class RealDevicePort:
             # device that refuses the removal does NOT raise, so a discarded
             # report reported success over an IR still on the device.
             ok = bool(report.get("ok"))
-            return OpResult(
-                ok=ok,
-                message=(
-                    f"deleted IR {ir_name!r}"
-                    if ok
-                    else f"device refused to delete IR {ir_name!r}"
-                ),
+            if not ok:
+                return OpResult(ok=False, message=f"device refused to delete IR {ir_name!r}")
+            # ``file_removed`` is the advisory SFTP half: registry gone but the
+            # backing .wav left behind is the wedged state the engine needs
+            # --force-wedge to clean, so don't report it as a clean delete.
+            suffix = (
+                ""
+                if report.get("file_removed")
+                else " (registry entry removed; backing file left on the device)"
             )
+            return OpResult(ok=True, message=f"deleted IR {ir_name!r}{suffix}")
 
         return self._op("delete_ir", _run)
 
     _PRUNE_TITLE = "Prune unreferenced device IRs"
 
     def plan_prune_irs(self) -> MutationPlan:
-        def _run() -> MutationPlan:
-            from helixgen.device import maintenance
+        """The preview behind a destructive ConfirmModal — so a planning
+        failure RAISES rather than becoming plan text: the caller runs this
+        through ``DeviceService.query``, which reports the failure and never
+        opens the modal. Swallowing it offered a confirmable prune with no
+        preview of what the confirm would delete."""
+        from helixgen.device import maintenance
 
-            ip = self._resolve_ip()
-            report = maintenance.ir_prune(ip=ip, port=self._port, execute=False)
-            # The dry-run report is ``{ok, dry_run, device_irs, referenced,
-            # protected, orphans, deleted, warnings, errors}`` — the delete
-            # candidates are ``orphans`` (``protected`` needs force, which
-            # this port never passes). The keys this used to read
-            # ("prunable"/"prune") have never existed, so the confirm modal
-            # for a destructive verb always claimed there was nothing to
-            # prune while the confirm went on to delete for real.
-            lines = tuple(
-                f"Delete {str(o.get('name') or o.get('hash'))!r} from the device."
-                for o in (report.get("orphans") or [])
-            ) or ("(no unreferenced device IRs to prune)",)
-            for warning in report.get("warnings") or []:
-                lines += (f"WARNING: {warning}",)
-            return MutationPlan(title=self._PRUNE_TITLE, lines=lines)
-
-        try:
-            return _run()
-        except DeviceUnreachable as exc:
-            return MutationPlan(
-                title=self._PRUNE_TITLE,
-                lines=(f"(device unreachable — {exc})",),
-            )
-        except Exception as exc:  # noqa: BLE001 — planning is best-effort
-            # e.g. the engine's pool cross-check aborting on an unstable
-            # listing: say so, instead of mislabelling it "unreachable".
-            return MutationPlan(
-                title=self._PRUNE_TITLE,
-                lines=(f"(could not preview the prune: {exc})",),
-            )
+        ip = self._resolve_ip()
+        report = maintenance.ir_prune(ip=ip, port=self._port, execute=False)
+        # The dry-run report is ``{ok, dry_run, device_irs, referenced,
+        # protected, orphans, deleted, warnings, errors}`` — the delete
+        # candidates are ``orphans`` (``protected`` needs force, which
+        # this port never passes). The keys this used to read
+        # ("prunable"/"prune") have never existed, so the confirm modal
+        # for a destructive verb always claimed there was nothing to
+        # prune while the confirm went on to delete for real.
+        lines = tuple(
+            f"Delete {str(o.get('name') or o.get('hash'))!r} from the device."
+            for o in (report.get("orphans") or [])
+        ) or ("(no unreferenced device IRs to prune)",)
+        for warning in report.get("warnings") or []:
+            lines += (f"WARNING: {warning}",)
+        return MutationPlan(title=self._PRUNE_TITLE, lines=lines)
 
     def prune_irs(self) -> OpResult:
         def _run() -> OpResult:
-            from helixgen.device import maintenance
+            from helixgen.device import HelixError, maintenance
 
             ip = self._resolve_ip()
-            report = maintenance.ir_prune(ip=ip, port=self._port, execute=True)
+            try:
+                report = maintenance.ir_prune(ip=ip, port=self._port, execute=True)
+            except HelixError as exc:
+                # ir_prune connects itself (no ``_session``), and its likeliest
+                # failure is an ABORT on a healthy device — the re-scan/pool
+                # cross-check disagreeing, nothing deleted. Letting ``_op`` map
+                # every HelixError to DeviceUnreachable would report that as
+                # "device offline" and flip the whole app offline.
+                return OpResult(ok=False, message=f"prune aborted: {exc}")
             # Per-IR delete refusals accumulate in ``errors`` and set
             # ``ok=False`` WITHOUT raising (same class as the push_ir fix).
             errors = report.get("errors") or []

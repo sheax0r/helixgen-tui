@@ -332,9 +332,11 @@ def test_plan_prune_irs_surfaces_warnings_and_the_empty_case(tmp_home, monkeypat
     assert any("tone 'x' unreadable" in line for line in lines)
 
 
-def test_plan_prune_irs_reports_a_planning_failure_as_itself(tmp_home, monkeypatch):
-    """A planning abort (e.g. the engine's pool cross-check) is not the same as
-    an unreachable device — the plan must not mislabel it."""
+def test_plan_prune_irs_raises_a_planning_failure(tmp_home, monkeypatch):
+    """The plan feeds a destructive ConfirmModal: a planning abort (e.g. the
+    engine's pool cross-check) must propagate so DeviceService.query reports it
+    and the modal never opens — swallowing it into plan text offered a
+    confirmable prune with no preview of what the confirm would delete."""
     from helixgen.device import HelixError, maintenance
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
@@ -343,12 +345,13 @@ def test_plan_prune_irs_reports_a_planning_failure_as_itself(tmp_home, monkeypat
         raise HelixError("device listings changed between scans")
 
     monkeypatch.setattr(maintenance, "ir_prune", boom)
-    lines = build_core().device.plan_prune_irs().lines
-    assert "device listings changed between scans" in " ".join(lines)
+    with pytest.raises(HelixError, match="device listings changed between scans"):
+        build_core().device.plan_prune_irs()
 
 
-def test_plan_prune_irs_offline_says_unreachable(offline):
-    assert "unreachable" in " ".join(build_core().device.plan_prune_irs().lines)
+def test_plan_prune_irs_offline_raises_unreachable(offline):
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.plan_prune_irs()
 
 
 def test_prune_irs_counts_deletions_and_fails_on_engine_errors(tmp_home, monkeypatch):
@@ -372,6 +375,23 @@ def test_prune_irs_counts_deletions_and_fails_on_engine_errors(tmp_home, monkeyp
     result = build_core().device.prune_irs()
     assert result.ok is False
     assert "device refused to delete IR 'Old Cab'" in result.message
+
+
+def test_prune_irs_abort_is_not_reported_as_an_offline_device(tmp_home, monkeypatch):
+    """``ir_prune``'s likeliest failure is an abort on a HEALTHY device (the
+    re-scan disagreeing, nothing deleted). ``_op`` maps every HelixError to
+    DeviceUnreachable, which would flip the whole app offline and say so."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise HelixError("device listings changed between the plan scan and the confirm scan")
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    result = build_core().device.prune_irs()
+    assert result.ok is False
+    assert "device listings changed" in result.message
 
 
 def test_delete_ir_reports_the_engine_refusal(tmp_home, monkeypatch):
@@ -404,3 +424,14 @@ def test_delete_ir_reports_the_engine_refusal(tmp_home, monkeypatch):
     result = build_core().device.delete_ir("Old Cab")
     assert result.ok is True
     assert result.message == "deleted IR 'Old Cab'"
+
+    # registry delete succeeded, SFTP file removal did not: that is the wedged
+    # state the engine needs --force-wedge to clean, not a clean delete
+    monkeypatch.setattr(
+        maintenance,
+        "delete_device_ir",
+        lambda client, name, ip=None: {"ok": True, "name": name, "file_removed": False},
+    )
+    result = build_core().device.delete_ir("Old Cab")
+    assert result.ok is True
+    assert "backing file left on the device" in result.message

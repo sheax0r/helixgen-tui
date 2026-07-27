@@ -119,7 +119,13 @@ DEVICE_PORT = 2002
 LIVE_ENABLED = os.environ.get("HELIXGEN_TUI_LIVE") == "1"
 
 _LIVE_DIR = Path(__file__).resolve().parent
-_REAL_HELIXGEN = Path.home() / ".helixgen"
+#: The user's REAL helixgen home, resolved at import (i.e. BEFORE ``_live_env``
+#: redirects ``$HELIXGEN_HOME`` to scratch) the same way the engine resolves it.
+#: Honouring ``$HELIXGEN_HOME`` matters for the lock root below: the engine
+#: derives ``locks/`` from it, so hardcoding ``~/.helixgen`` on a machine with a
+#: custom home would put the session lease in a root no other helixgen process
+#: reads — the run's whole exclusion guarantee, silently doing nothing.
+_REAL_HELIXGEN = Path(os.environ.get("HELIXGEN_HOME") or Path.home() / ".helixgen")
 
 
 def _persisted_device_ip() -> str | None:
@@ -127,10 +133,9 @@ def _persisted_device_ip() -> str | None:
     (the suite must resolve it BEFORE redirecting $HELIXGEN_HOME to scratch).
     Ordering matches ``discovery.resolve_ip()``: ``ip_updated_at`` desc, then
     ``serial`` desc (filename stem when the field is absent)."""
-    home = Path(os.environ.get("HELIXGEN_HOME") or _REAL_HELIXGEN)
     best: tuple | None = None
     try:
-        files = list((home / "devices").glob("*.json"))
+        files = list((_REAL_HELIXGEN / "devices").glob("*.json"))
     except OSError:
         return None
     for p in files:

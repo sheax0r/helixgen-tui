@@ -364,3 +364,26 @@ one — `RealDevicePort._op` catches broad on purpose (it fails soft to
 `OpResult(ok=False)` for the footer), so those want a targeted `noqa` with the
 reason, not a narrowed except. `RUF012` wants `ClassVar` annotations on Textual
 `BINDINGS`/`CSS` class attributes. Then unpin, or bump the pin deliberately.
+
+## 25. Live-suite brittleness left unfixed (review findings, 2026-07-27)
+
+Minor, live-suite-only, all deferred deliberately in the second review pass of
+the `tests/live/` branch:
+
+- `test_backup_via_port`'s `any(before.get(p) != m for p, m in after.items())`
+  is `any([])` → False on a device with **zero** user presets, failing the test
+  instead of passing vacuously. Guard on `n`.
+- `test_prune_irs_executes_only_against_hgtest_orphans` asserts the exact
+  message `"pruned 1 unreferenced device IR(s)"`; a leaked *wedged* HGTEST IR
+  (invisible to the state guard) makes it 2 and the failure reads as a port
+  regression. Safety is unaffected — the gate still restricts execution to
+  HGTEST-only orphans. Prefer `startswith("pruned ")` plus the hash-gone check.
+  In the same test, `next(o.get("name") ...)` can yield `None`, and
+  `None in planned` raises `TypeError` rather than failing the assertion.
+- `_live_env` mutates `os.environ` for the whole session and only restores at
+  session teardown, so modules collected after `tests/live/` run with
+  `HELIXGEN_HELIX_IP` set. Inert today (nothing after it builds the real core),
+  but a future test added there would silently talk to hardware. Fix: assert in
+  `tests/conftest.py`'s session guard that non-live tests see no device IP.
+- `DEVICE_IP` is resolved at import on every default run and printed into the
+  `-ra` skip reason, so the LAN address shows up in local/CI test output.
