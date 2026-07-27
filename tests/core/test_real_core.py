@@ -9,6 +9,7 @@ offline behavior and their signatures — never driven against hardware.
 from __future__ import annotations
 
 import inspect
+from contextlib import contextmanager
 
 import pytest
 
@@ -284,3 +285,122 @@ def test_sync_tone_in_synced_setlist_syncs_only_that_setlist(tmp_home, monkeypat
     result = build_core().device.sync_tone(name)
     assert result.ok is True
     assert captured["setlists"] == ["Gig 1"]
+
+
+# --- Fix 4: the IR prune/delete verbs read the engine's real report shape ---
+
+
+def _prune_report(*, orphans=(), deleted=(), errors=(), warnings=()):
+    """``maintenance.ir_prune``'s documented return shape."""
+    return {
+        "ok": not errors,
+        "dry_run": not deleted,
+        "device_irs": len(orphans),
+        "referenced": [],
+        "protected": [],
+        "orphans": list(orphans),
+        "deleted": list(deleted),
+        "warnings": list(warnings),
+        "errors": list(errors),
+    }
+
+
+def test_plan_prune_irs_lists_the_orphans_the_engine_reports(tmp_home, monkeypatch):
+    """The plan feeds a destructive ConfirmModal. It used to read "prunable"/
+    "prune" — keys the engine has never emitted — so it always claimed there
+    was nothing to prune while the confirm deleted for real."""
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    report = _prune_report(orphans=[{"name": "Old Cab", "hash": "abc"}])
+    monkeypatch.setattr(maintenance, "ir_prune", lambda **k: report)
+
+    plan = build_core().device.plan_prune_irs()
+    assert "Old Cab" in " ".join(plan.lines)
+    assert "no unreferenced" not in " ".join(plan.lines)
+
+
+def test_plan_prune_irs_surfaces_warnings_and_the_empty_case(tmp_home, monkeypatch):
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    monkeypatch.setattr(
+        maintenance, "ir_prune", lambda **k: _prune_report(warnings=["tone 'x' unreadable"])
+    )
+    lines = build_core().device.plan_prune_irs().lines
+    assert "(no unreferenced device IRs to prune)" in lines
+    assert any("tone 'x' unreadable" in line for line in lines)
+
+
+def test_plan_prune_irs_reports_a_planning_failure_as_itself(tmp_home, monkeypatch):
+    """A planning abort (e.g. the engine's pool cross-check) is not the same as
+    an unreachable device — the plan must not mislabel it."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise HelixError("device listings changed between scans")
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    lines = build_core().device.plan_prune_irs().lines
+    assert "device listings changed between scans" in " ".join(lines)
+
+
+def test_plan_prune_irs_offline_says_unreachable(offline):
+    assert "unreachable" in " ".join(build_core().device.plan_prune_irs().lines)
+
+
+def test_prune_irs_counts_deletions_and_fails_on_engine_errors(tmp_home, monkeypatch):
+    """``ir_prune`` accumulates per-IR refusals in ``errors`` and sets ok=False
+    WITHOUT raising — a discarded report reported success over a failed prune."""
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    monkeypatch.setattr(
+        maintenance, "ir_prune", lambda **k: _prune_report(deleted=[{"name": "Old Cab"}])
+    )
+    result = build_core().device.prune_irs()
+    assert result.ok is True
+    assert "pruned 1 unreferenced device IR(s)" == result.message
+
+    monkeypatch.setattr(
+        maintenance,
+        "ir_prune",
+        lambda **k: _prune_report(errors=["device refused to delete IR 'Old Cab'"]),
+    )
+    result = build_core().device.prune_irs()
+    assert result.ok is False
+    assert "device refused to delete IR 'Old Cab'" in result.message
+
+
+def test_delete_ir_reports_the_engine_refusal(tmp_home, monkeypatch):
+    """``delete_device_ir`` returns ``ok=False`` (no raise) when the device
+    refuses the removal; the port used to hardcode ok=True."""
+    from helixgen.device import maintenance
+    from helixgen_tui.core import real
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    @contextmanager
+    def fake_session(self, ip):
+        yield object()
+
+    monkeypatch.setattr(real.RealDevicePort, "_session", fake_session)
+    monkeypatch.setattr(
+        maintenance,
+        "delete_device_ir",
+        lambda client, name, ip=None: {"ok": False, "name": name, "file_removed": False},
+    )
+    result = build_core().device.delete_ir("Old Cab")
+    assert result.ok is False
+    assert "Old Cab" in result.message
+
+    monkeypatch.setattr(
+        maintenance,
+        "delete_device_ir",
+        lambda client, name, ip=None: {"ok": True, "name": name, "file_removed": True},
+    )
+    result = build_core().device.delete_ir("Old Cab")
+    assert result.ok is True
+    assert result.message == "deleted IR 'Old Cab'"

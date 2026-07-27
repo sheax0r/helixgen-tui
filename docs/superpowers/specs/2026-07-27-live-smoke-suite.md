@@ -1,7 +1,7 @@
 # Live smoke suite for `RealDevicePort` (backlog #5, spec D6)
 
 2026-07-27. Closes `docs/BACKLOG.md` #5. Plan:
-`docs/plans/2026-07-27-live-smoke-suite.md`.
+`docs/plans/completed/2026-07-27-live-smoke-suite.md`.
 
 ## Why
 
@@ -64,9 +64,10 @@ Summary (the conftest docstring is normative):
   presets / setlists / IRs) captured before the first device test and
   re-captured at teardown — the session itself fails if the normalized state
   changed. Stale `HGTEST` leftovers from a crashed run are swept before the
-  baseline capture. Known blind spots, stated honestly: the preset pool
-  (cid -2) can't be listed, so pool leaks are caught only by the sync tests'
-  own assertions; the active edit buffer isn't diffed (unsaved pre-run edits
+  baseline capture. `device list --json` defaults to `--setlist user`, which
+  IS the preset pool (cid -2, where every user preset lives), so pool leaks
+  are covered by the diff. Known blind spot, stated honestly: the active edit
+  buffer isn't diffed (unsaved pre-run edits
   are discarded by `make_active` restore, by design). The repo-wide guard in
   `tests/conftest.py` verifies the user's real `~/.helixgen` (minus `locks/`)
   is untouched.
@@ -80,8 +81,9 @@ Summary (the conftest docstring is normative):
   same reason). Only its unsupported/plan paths are asserted.
 - **`sync_all(gc=True)`** — the GC phase deletes device pool presets the
   manifest doesn't reference; against the suite's scratch manifest that means
-  any unreferenced real pool preset, invisibly to the state guard (the pool
-  container can't be listed). Covered with `gc=False` only. `prune_irs` — a
+  every real pool preset. The state guard would report the damage, but only
+  after it happened, and no TUI surface passes `gc=True` (`screens/setlists.py`
+  passes `False` at every call site). Covered with `gc=False` only. `prune_irs` — a
   real deletion too — stays in, but executes only when the engine's dry-run
   plan shows the sole orphan is the test's own `HGTEST` IR; on a device with
   real orphan IRs it skips itself.
@@ -115,3 +117,43 @@ Summary (the conftest docstring is normative):
   **core #38** in 0.31.0 (listing-cache nudge in `push_ir`,
   hardware-validated 2026-07-27), so nothing new was filed. Action here: the
   engine pin was bumped to `helixgen[device]>=0.31` (lock at 0.32.0).
+
+### Found in adversarial review of the suite itself (2026-07-27)
+
+The suite's plan-verb tests asserted `MutationPlan` *shape* only, which three
+IR verbs satisfied while lying about (or discarding) the engine's report:
+
+- **`plan_prune_irs` read report keys the engine has never emitted**
+  (`prunable`/`prune`; the engine returns candidates under `orphans`). The
+  plan therefore always rendered "(no unreferenced device IRs to prune)" —
+  and that placeholder is what the destructive `ConfirmModal` showed before
+  `prune_irs()` went on to delete every orphan for real. The live run's own
+  log proves the skew was reproducible: the prune test skipped *because the
+  device had real non-HGTEST orphans* at the same moment the plan reported
+  none. Fixed, plus: the plan now surfaces the engine's `warnings`, a
+  planning abort is reported as itself instead of as "device unreachable",
+  `test_plan_prune_irs_matches_engine_cli` cross-checks the plan against
+  `device ir-prune --json` (the pattern `test_list_device_irs_matches_engine_cli`
+  already used), and offline unit tests pin the report shape.
+- **`prune_irs` and `delete_ir` hardcoded `ok=True`**, discarding reports in
+  which the engine records per-IR delete refusals (`errors`, `ok=False`) and
+  never raises — the same defect class as the `push_ir` fix above. Both now
+  fold the report; `prune_irs` reports the deletion count.
+
+Suite hardening from the same review: the stale-`HGTEST` sweep now fails the
+session if a delete fails (a surviving leftover would be absorbed into the
+state baseline, so teardown would then match and report a clean device); the
+backup test compares mtimes instead of a file count the upfront-backup fixture
+already satisfied; `_persisted_device_ip` can no longer raise at collection
+time on a malformed device record (it ran on every default offline run); the
+state-diff normalizer no longer risks a `TypeError` on rows with missing keys;
+`_live_env` fails fast below helixgen 0.31 instead of presenting core #38 as a
+TUI regression; the session lease is no longer taken against a fabricated
+`no-device` address and its TTL is sized to the run (30 min, not 2 h).
+
+**Correction to the safety model as first documented:** the state guard was
+described as blind to the preset pool. It is not — `device list --json`
+defaults to `--setlist user`, which *is* the pool (cid -2). The `gc=True`
+exclusion still stands, on the honest reason: the guard would only report the
+damage after the presets were already deleted, and no TUI surface passes
+`gc=True`.

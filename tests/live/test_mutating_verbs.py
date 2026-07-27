@@ -9,10 +9,11 @@ breakage this suite exists to catch.
 Scoping notes (see also the conftest docstring's excluded-verbs section):
 
 * ``sync_all`` runs with ``gc=False`` only. The GC phase would delete device
-  pool presets the (scratch) manifest doesn't reference — i.e. potentially the
-  user's real pool presets, invisible to the session state guard (the pool
-  container ``-2`` can't be listed). ``gc=True`` is deliberately excluded,
-  same reason helixgen-core's live suite excludes ``sync --gc``.
+  pool presets the (scratch) manifest doesn't reference — i.e. every real pool
+  preset. The session state guard WOULD see it (``device list --json``
+  defaults to ``--setlist user``, which is the pool), but only after the fact,
+  and no TUI surface passes ``gc=True`` anyway. Deliberately excluded, same
+  reason helixgen-core's live suite excludes ``sync --gc``.
 * ``prune_irs`` executes a real deletion, so it is gated on the engine's own
   dry-run plan: the test skips unless the only orphan the prune would delete
   is its own ``HGTEST`` IR and there are no verification warnings.
@@ -23,6 +24,7 @@ Scoping notes (see also the conftest docstring's excluded-verbs section):
 from __future__ import annotations
 
 import json
+import random
 import re
 import struct
 import time
@@ -33,7 +35,11 @@ import pytest
 
 from helixgen_tui.core.models import OpResult
 
-HGTEST = "HGTEST"  # same fixed prefix the conftest safety net enforces
+# The ONE definition — the conftest teardown sweeper refuses to touch anything
+# without this prefix, so a second copy here could silently drift out of its
+# reach and strand artifacts on real hardware. (pytest puts this directory on
+# sys.path, so the sibling conftest imports by name.)
+from conftest import HGTEST
 
 SETLIST = f"{HGTEST}-TUI-SYNC"
 TONE_A = f"{HGTEST} TUI Sync A"
@@ -131,17 +137,11 @@ def _teardown_device_ir(helix, irhash: str, registered: bool) -> None:
 
 def _write_test_wav(path: Path, seed: int, frames: int = 2048) -> Path:
     """Deterministic 48 kHz mono 16-bit impulse-ish WAV (stdlib only)."""
-    rng_state = seed
-
-    def rand16() -> int:
-        nonlocal rng_state
-        rng_state = (1103515245 * rng_state + 12345) % (1 << 31)
-        return (rng_state >> 8) % 65536 - 32768
-
+    rnd = random.Random(seed)  # seeded Random is deterministic by contract
     samples = [32000]
     for i in range(1, frames):
-        decay = max(0.0, 1.0 - i / frames)
-        samples.append(int(rand16() * 0.25 * decay))
+        decay = 1.0 - i / frames
+        samples.append(int(rnd.randrange(-32768, 32768) * 0.25 * decay))
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -221,8 +221,8 @@ def test_sync_lifecycle_via_port(real_port, helix, cli, scratch, amp_blocks):
         assert untracked_after == untracked_before
 
         # unsync both → the cleanup sync's own report must show the HGTEST
-        # pool presets DELETED (the pool can't be listed; this closes the
-        # session guard's blind spot explicitly)
+        # pool presets DELETED (the session guard would catch a leak at
+        # teardown; this pins it to THIS test instead)
         for tone in (TONE_A, TONE_B):
             code, out, err = helix("device", "unsync", tone)
             assert code == 0, err or out
@@ -236,8 +236,8 @@ def test_sync_lifecycle_via_port(real_port, helix, cli, scratch, amp_blocks):
         assert code == 0, err or out
     finally:
         # belt-and-braces on failure: unsync, cleanup-sync if the setlist
-        # survived, drop it. Report (never assert) problems — leaked pool
-        # presets are invisible to the session state guard.
+        # survived, drop it. Report (never assert) problems here — the session
+        # state guard is what fails the run on a leak.
         for tone in (TONE_A, TONE_B):
             helix("device", "unsync", tone)
         still_there = any(m.get("name") == SETLIST for m in _device_setlists(helix))
@@ -389,8 +389,14 @@ def test_prune_irs_executes_only_against_hgtest_orphans(real_port, helix, cli, s
             )
         assert any(o.get("hash") == irhash for o in plan.get("orphans", [])), plan
 
+        # the port's plan must name the orphan the engine reports (the plan
+        # feeds the destructive ConfirmModal)
+        planned = " ".join(real_port.plan_prune_irs().lines)
+        name = next(o.get("name") for o in plan["orphans"] if o.get("hash") == irhash)
+        assert name in planned, planned
+
         res = real_port.prune_irs()
-        _assert_op(res, True, "pruned unreferenced device IRs")
+        _assert_op(res, True, "pruned 1 unreferenced device IR(s)")
         assert irhash not in _device_ir_rows(helix)
     finally:
         _teardown_device_ir(helix, irhash, registered)
@@ -405,10 +411,21 @@ def test_backup_via_port(real_port, helix, scratch):
     code, out, err = helix("device", "list", "--json")
     assert code == 0, err or out
     n = len(json.loads(out))
+    # The upfront `device_backup` fixture already wrote one .sbe per preset
+    # into this same dir under the same names, so a bare file COUNT would hold
+    # whether or not the port wrote anything. Compare mtimes instead.
+    backups = scratch / "backups"
+    before = {p: p.stat().st_mtime_ns for p in backups.glob("*.sbe")}
+    time.sleep(0.01)  # mtime_ns resolution guard on coarse filesystems
     res = real_port.backup()
     _assert_op(res, True, f"backed up {n} preset(s)")
     # $HELIXGEN_DEVICE_BACKUPS redirects the port's default backup dir
-    assert len(list((scratch / "backups").glob("*.sbe"))) >= n
+    after = {p: p.stat().st_mtime_ns for p in backups.glob("*.sbe")}
+    assert len(after) >= n
+    assert any(before.get(p) != m for p, m in after.items()), (
+        "no .sbe under $HELIXGEN_DEVICE_BACKUPS was written or rewritten — "
+        "the port's backup did not land in the scratch redirect"
+    )
 
 
 def test_delete_tone_is_unwired(real_port):

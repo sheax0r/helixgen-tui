@@ -261,14 +261,12 @@ class RealDevicePort:
         full ``os.path.basename`` (with extension), so a stem never matched and
         every push failed. Resolving here across all three keys (hash first)
         fixes that without changing the port signature."""
-        import os
-
         entries = mapping.entries
         if ir_name in entries:  # already an irhash — prefer it
             return ir_name
         for irhash, wav_path in entries.items():
-            basename = os.path.basename(str(wav_path))
-            if basename == ir_name or os.path.splitext(basename)[0] == ir_name:
+            path = pathlib.PurePath(str(wav_path))
+            if path.name == ir_name or path.stem == ir_name:
                 return irhash
         return None
 
@@ -282,8 +280,6 @@ class RealDevicePort:
             irhash = self._resolve_ir_hash(mapping, ir_name)
             if irhash is None:
                 return OpResult(ok=False, message=f"no registered IR named {ir_name!r}")
-            import os
-
             results = ir_upload.upload_missing_irs(ip, [irhash])
             # the engine's per-hash ``ok`` is True only for "already"/
             # "imported" — soft failures (upload_failed, not_yet_registered,
@@ -292,7 +288,7 @@ class RealDevicePort:
             # ir_name may be a raw irhash (the screen pushes by hash so
             # duplicate display names stay unambiguous) — report the
             # registered file's stem instead.
-            label = os.path.splitext(os.path.basename(str(mapping.entries[irhash])))[0]
+            label = pathlib.PurePath(str(mapping.entries[irhash])).stem
             if ok:
                 msg = f"pushed IR {label!r}"
             else:
@@ -317,10 +313,23 @@ class RealDevicePort:
 
             ip = self._resolve_ip()
             with self._session(ip) as client:
-                maintenance.delete_device_ir(client, ir_name, ip=ip)
-            return OpResult(ok=True, message=f"deleted IR {ir_name!r}")
+                report = maintenance.delete_device_ir(client, ir_name, ip=ip)
+            # the engine returns ``ok = bool(client.delete_irs([cid]))`` — a
+            # device that refuses the removal does NOT raise, so a discarded
+            # report reported success over an IR still on the device.
+            ok = bool(report.get("ok"))
+            return OpResult(
+                ok=ok,
+                message=(
+                    f"deleted IR {ir_name!r}"
+                    if ok
+                    else f"device refused to delete IR {ir_name!r}"
+                ),
+            )
 
         return self._op("delete_ir", _run)
+
+    _PRUNE_TITLE = "Prune unreferenced device IRs"
 
     def plan_prune_irs(self) -> MutationPlan:
         def _run() -> MutationPlan:
@@ -328,18 +337,34 @@ class RealDevicePort:
 
             ip = self._resolve_ip()
             report = maintenance.ir_prune(ip=ip, port=self._port, execute=False)
-            prunable = report.get("prunable") or report.get("prune") or []
-            lines = tuple(str(x.get("name", x)) for x in prunable) if prunable else (
-                "(no unreferenced device IRs to prune)",
-            )
-            return MutationPlan(title="Prune unreferenced device IRs", lines=lines)
+            # The dry-run report is ``{ok, dry_run, device_irs, referenced,
+            # protected, orphans, deleted, warnings, errors}`` — the delete
+            # candidates are ``orphans`` (``protected`` needs force, which
+            # this port never passes). The keys this used to read
+            # ("prunable"/"prune") have never existed, so the confirm modal
+            # for a destructive verb always claimed there was nothing to
+            # prune while the confirm went on to delete for real.
+            lines = tuple(
+                f"Delete {str(o.get('name') or o.get('hash'))!r} from the device."
+                for o in (report.get("orphans") or [])
+            ) or ("(no unreferenced device IRs to prune)",)
+            for warning in report.get("warnings") or []:
+                lines += (f"WARNING: {warning}",)
+            return MutationPlan(title=self._PRUNE_TITLE, lines=lines)
 
         try:
             return _run()
-        except Exception:  # noqa: BLE001 — offline/planning is best-effort
+        except DeviceUnreachable as exc:
             return MutationPlan(
-                title="Prune unreferenced device IRs",
-                lines=("(device unreachable — connect to preview the prune)",),
+                title=self._PRUNE_TITLE,
+                lines=(f"(device unreachable — {exc})",),
+            )
+        except Exception as exc:  # noqa: BLE001 — planning is best-effort
+            # e.g. the engine's pool cross-check aborting on an unstable
+            # listing: say so, instead of mislabelling it "unreachable".
+            return MutationPlan(
+                title=self._PRUNE_TITLE,
+                lines=(f"(could not preview the prune: {exc})",),
             )
 
     def prune_irs(self) -> OpResult:
@@ -347,8 +372,15 @@ class RealDevicePort:
             from helixgen.device import maintenance
 
             ip = self._resolve_ip()
-            maintenance.ir_prune(ip=ip, port=self._port, execute=True)
-            return OpResult(ok=True, message="pruned unreferenced device IRs")
+            report = maintenance.ir_prune(ip=ip, port=self._port, execute=True)
+            # Per-IR delete refusals accumulate in ``errors`` and set
+            # ``ok=False`` WITHOUT raising (same class as the push_ir fix).
+            errors = report.get("errors") or []
+            deleted = len(report.get("deleted") or [])
+            message = f"pruned {deleted} unreferenced device IR(s)"
+            if errors:
+                message = f"{message} — {len(errors)} failed: {errors[0]}"
+            return OpResult(ok=not errors, message=message)
 
         return self._op("prune_irs", _run)
 

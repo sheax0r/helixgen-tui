@@ -24,7 +24,13 @@ of the offline-first hinge need only the env gate.
 
 Run it::
 
-    HELIXGEN_TUI_LIVE=1 .venv/bin/python -m pytest tests/live -q
+    HELIXGEN_TUI_LIVE=1 uv run pytest tests/live -q
+
+It also needs helixgen >=0.31 installed (below that a pushed IR never
+re-appears in ``list-irs`` — helixgen-core #38 — and the IR tests would fail as
+if the TUI had regressed, so ``_live_env`` fails fast instead), an ingested
+block library, and a resolvable device IP. A missing library, IP, or device is
+a SKIP; a too-old engine is a failure.
 
 Safety model (encoded as fixtures)
 ----------------------------------
@@ -47,9 +53,10 @@ Safety model (encoded as fixtures)
   ``--json`` verbs) is captured before the first device test and re-captured
   at session teardown; the session ITSELF FAILS if the normalized state
   changed (``device_state_guard``). Stale ``HGTEST`` leftovers from a crashed
-  previous run are swept before the capture. Known blind spots, stated
-  honestly: the preset pool (cid space -2) cannot be listed directly, so pool
-  leaks are only caught by the sync tests' own assertions; the ACTIVE edit
+  previous run are swept before the capture. ``device list --json`` defaults
+  to ``--setlist user``, which IS the preset POOL (cid space -2, where every
+  user preset lives), so pool leaks ARE covered by the diff. Known blind spot,
+  stated honestly: the ACTIVE edit
   buffer is not part of the diff (``make_active`` tests capture and restore
   the active preset themselves, but unsaved edit-buffer changes present
   before the run are discarded by design — saved presets are covered by the
@@ -80,11 +87,13 @@ Deliberately excluded verbs (and why)
   it for the same reason). Only its unsupported/plan paths are asserted.
 * ``sync_all(gc=True)`` — the GC phase (which only runs on the all-setlists
   sync) deletes device pool presets the manifest doesn't reference; against
-  this suite's SCRATCH manifest that means any unreferenced real pool preset,
-  and the pool container (``-2``) can't be listed, so the session state guard
-  could not even detect the damage. ``sync_all`` is covered with ``gc=False``
-  only (helixgen-core's live suite excludes ``sync --gc`` for the same
-  reason). ``prune_irs`` — a real deletion too — stays in, but gated on the
+  this suite's SCRATCH manifest that means EVERY real pool preset. The state
+  guard would catch the damage after the fact, which is no use — the presets
+  would already be gone. No TUI surface passes ``gc=True`` anyway
+  (``screens/setlists.py`` passes ``False`` at every call site), so
+  ``sync_all`` is covered with ``gc=False`` only (helixgen-core's live suite
+  excludes ``sync --gc`` for the same reason).
+  ``prune_irs`` — a real deletion too — stays in, but gated on the
   engine's own dry-run plan: it executes only when the sole orphan is the
   test's own ``HGTEST`` IR.
 """
@@ -97,6 +106,7 @@ import socket
 import subprocess
 import sys
 import uuid
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -126,11 +136,15 @@ def _persisted_device_ip() -> str | None:
     for p in files:
         try:
             data = json.loads(p.read_text())
-        except (OSError, ValueError):
+            if not isinstance(data, dict) or not data.get("ip"):
+                continue
+            # a device record the suite does not own: any field may be junk,
+            # and this runs at COLLECTION time on every default (offline) run,
+            # so a raise here would break `pytest` for someone who never asked
+            # for the live suite.
+            key = (float(data.get("ip_updated_at") or 0.0), str(data.get("serial") or p.stem))
+        except (OSError, ValueError, TypeError):
             continue
-        if not isinstance(data, dict) or not data.get("ip"):
-            continue
-        key = (float(data.get("ip_updated_at") or 0.0), str(data.get("serial") or p.stem))
         if best is None or key > best[0]:
             best = (key, str(data["ip"]))
     return best[1] if best else None
@@ -147,7 +161,9 @@ def pytest_collection_modifyitems(config, items):
         f"(device tests also need the Helix reachable on {DEVICE_IP}:{DEVICE_PORT})"
     )
     for item in items:
-        if _LIVE_DIR not in Path(str(item.fspath)).parents:
+        # .resolve() both sides — _LIVE_DIR is resolved, and an unresolved
+        # item path (symlinked checkout) would silently miss the gate.
+        if _LIVE_DIR not in Path(str(item.fspath)).resolve().parents:
             continue
         item.add_marker(pytest.mark.live)
         if not LIVE_ENABLED:
@@ -190,8 +206,17 @@ def _live_env(scratch: Path, real_library: Path):
     """Redirect ALL helixgen state to scratch, in os.environ, for the whole
     session — the in-process port under test and every CLI subprocess the
     safety net spawns must see the same isolated state."""
-    if sys.modules.get("helixgen") is None:
-        pytest.importorskip("zmq", reason="live suite needs pyzmq for the device layer")
+    # The suite's whole job is telling "the port broke" apart from "the engine
+    # broke", so an engine below the pin (helixgen-core #38 healed the -11
+    # listing cache on push, which `_wait_ir_registered` depends on) must fail
+    # as itself, not as a TUI regression.
+    engine = version("helixgen")
+    if tuple(int(p) for p in engine.split(".")[:2]) < (0, 31):
+        pytest.fail(
+            f"live suite needs helixgen >=0.31 (installed: {engine}) — below "
+            "that, a pushed IR never re-appears in list-irs (core #38) and the "
+            "IR tests fail as if the TUI regressed. Re-sync the venv."
+        )
     redirect = {
         "HELIXGEN_HOME": str(scratch / "home"),
         # The advisory-lock root stays REAL (it would otherwise derive from
@@ -246,9 +271,19 @@ def cli(_live_env):
         )
         return proc.returncode, proc.stdout, proc.stderr
 
-    lock_ip = ("--ip", DEVICE_IP) if DEVICE_IP else ("--ip", "no-device")
+    if not DEVICE_IP:
+        # Nothing to serialize against (every device-backed test skips), and
+        # leases are keyed per-IP under the user's REAL lock root — a
+        # fabricated address would leave junk there.
+        yield run
+        return
+    # TTL sized to the run (minutes), not to a workday: the lease lives in the
+    # real lock root and is only released in the finally below, so a SIGKILL
+    # would otherwise wedge every other helixgen process on this machine until
+    # it expires. Recover a wedged lease with `helixgen device unlock --force`.
     code, out, err = run(
-        "device", "lock", "--scope", "all", "--label", "tui-live-suite", "--ttl", "7200", *lock_ip
+        "device", "lock", "--scope", "all", "--label", "tui-live-suite",
+        "--ttl", "1800", "--ip", DEVICE_IP,
     )
     assert code == 0, (
         "could not acquire the session 'all' device lease — is another "
@@ -257,7 +292,7 @@ def cli(_live_env):
     try:
         yield run
     finally:
-        run("device", "unlock", *lock_ip)
+        run("device", "unlock", "--ip", DEVICE_IP)
 
 
 # --------------------------------------------------------------------------
@@ -295,7 +330,10 @@ def device_backup(device: str, cli, scratch: Path) -> Path:
 
 
 def _normalize_rows(raw: str, *keys: str):
-    return sorted(tuple(m.get(k) for k in keys) for m in json.loads(raw))
+    # str() every field: a row missing a key yields None, and sorting tuples
+    # that mix None with int/str raises TypeError — inside the teardown guard
+    # that would replace the state-leak signal with an unrelated crash.
+    return sorted(tuple(str(m.get(k)) for k in keys) for m in json.loads(raw))
 
 
 def _capture_device_state(cli) -> dict:
@@ -314,26 +352,49 @@ def _capture_device_state(cli) -> dict:
 def _sweep_stale_hgtest_artifacts(cli) -> list[str]:
     """Delete HGTEST-prefixed leftovers from a previously crashed run, BEFORE
     the state capture (a stale artifact must not be absorbed into the
-    baseline). Only ever touches HGTEST-prefixed presets/setlists/IRs."""
-    swept = []
+    baseline). Only ever touches HGTEST-prefixed presets/setlists/IRs.
+
+    A delete that FAILS is fatal: the leftover would be absorbed into the
+    baseline, the teardown diff would then match, and the suite would report a
+    clean device while its own junk sat on it."""
+    swept, failed = [], []
+
+    def _sweep(label: str, *args):
+        code, out, err = cli(*args)
+        if code == 0:
+            swept.append(label)
+        else:
+            failed.append(f"{label}: {(err or out).strip()}")
+
     code, out, _ = cli("device", "list", "--json")
     if code == 0:
         for m in json.loads(out):
             if (m.get("name") or "").startswith(HGTEST):
-                cli("device", "delete", m["cid_"], "--yes")
-                swept.append(f"preset {m['name']!r} (cid {m['cid_']})")
+                _sweep(
+                    f"preset {m['name']!r} (cid {m['cid_']})",
+                    "device", "delete", m["cid_"], "--yes",
+                )
     code, out, _ = cli("device", "setlists", "--json")
     if code == 0:
         for m in json.loads(out):
             if (m.get("name") or "").startswith(HGTEST):
-                cli("device", "setlist", "delete", m["name"], "--yes")
-                swept.append(f"setlist {m['name']!r}")
+                _sweep(
+                    f"setlist {m['name']!r}",
+                    "device", "setlist", "delete", m["name"], "--yes",
+                )
     code, out, _ = cli("device", "list-irs", "--json")
     if code == 0:
         for m in json.loads(out):
             if (m.get("name") or "").startswith(HGTEST):
-                cli("device", "delete-ir", m["hash"], "--yes")
-                swept.append(f"IR {m['name']!r} ({m['hash']})")
+                _sweep(
+                    f"IR {m['name']!r} ({m['hash']})",
+                    "device", "delete-ir", m["hash"], "--yes",
+                )
+    assert not failed, (
+        "could not sweep stale HGTEST artifacts from a previous run — they "
+        "would poison the state baseline. Clean them by hand and re-run:\n  "
+        + "\n  ".join(failed)
+    )
     return swept
 
 

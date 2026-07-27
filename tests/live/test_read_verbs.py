@@ -17,6 +17,7 @@ import pytest
 
 from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan
 from helixgen_tui.core.ports import DeviceUnreachable
+from helixgen_tui.core.real import RealDevicePort
 
 # --------------------------------------------------------------------------
 # read / status, device-backed
@@ -79,11 +80,11 @@ def _assert_plan(plan: MutationPlan):
 
 
 def test_plan_sync_all(real_port):
-    plan = _plan = real_port.plan_sync_all(gc=False)
+    plan = real_port.plan_sync_all(gc=False)
     _assert_plan(plan)
     gc_plan = real_port.plan_sync_all(gc=True)
     _assert_plan(gc_plan)
-    assert len(gc_plan.lines) == len(_plan.lines) + 1  # the GC line
+    assert len(gc_plan.lines) == len(plan.lines) + 1  # the GC line
 
 
 def test_plan_delete_tone(real_port):
@@ -98,8 +99,22 @@ def test_plan_delete_ir(real_port):
     assert "HGTEST nonexistent" in " ".join(plan.lines)
 
 
-def test_plan_prune_irs_live(real_port):
-    _assert_plan(real_port.plan_prune_irs())
+def test_plan_prune_irs_matches_engine_cli(real_port, helix):
+    """Shape alone can't catch key skew here: the plan feeds a DESTRUCTIVE
+    confirm modal, and reading a key the engine doesn't emit yields a
+    well-formed "(nothing to prune)" plan while the confirm deletes for real
+    (that exact bug shipped). Cross-check against the engine's own dry run."""
+    plan = real_port.plan_prune_irs()
+    _assert_plan(plan)
+    code, out, err = helix("device", "ir-prune", "--json", timeout=300)
+    assert code == 0, err or out
+    orphans = json.loads(out).get("orphans") or []
+    joined = " ".join(plan.lines)
+    if orphans:
+        for o in orphans:
+            assert str(o.get("name") or o.get("hash")) in joined, (orphans, plan.lines)
+    else:
+        assert "no unreferenced device IRs" in joined, plan.lines
 
 
 def test_plan_restore_is_unsupported(real_port):
@@ -113,12 +128,6 @@ def test_plan_restore_is_unsupported(real_port):
 # --------------------------------------------------------------------------
 
 
-def _fresh_port(port: int | None = None):
-    from helixgen_tui.core.real import RealDevicePort
-
-    return RealDevicePort(port=port) if port is not None else RealDevicePort()
-
-
 def test_probe_unconfigured_raises_without_socket(monkeypatch):
     """No --ip, no $HELIXGEN_HELIX_IP, no device record (scratch home):
     DeviceUnreachable immediately, and provably no socket."""
@@ -130,8 +139,8 @@ def test_probe_unconfigured_raises_without_socket(monkeypatch):
     monkeypatch.setattr(socket, "socket", _bomb)
     monkeypatch.setattr(socket, "create_connection", _bomb)
     with pytest.raises(DeviceUnreachable):
-        _fresh_port().probe()
-    assert _fresh_port().lock_status() == []
+        RealDevicePort().probe()
+    assert RealDevicePort().lock_status() == []
 
 
 def test_probe_unreachable_maps_to_device_unreachable(monkeypatch):
@@ -142,4 +151,4 @@ def test_probe_unreachable_maps_to_device_unreachable(monkeypatch):
         closed_port = s.getsockname()[1]
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "127.0.0.1")
     with pytest.raises(DeviceUnreachable):
-        _fresh_port(port=closed_port).probe()
+        RealDevicePort(port=closed_port).probe()

@@ -35,8 +35,14 @@ before any code.
   a Stadium XL (fw 1.3.2): final run 20 passed / 1 skipped (prune safety gate,
   by design). Found and fixed one TUI defect (`push_ir` reported `ok=True` on
   engine soft failures); one engine gap was already fixed upstream as core #38
-  (helixgen 0.31, engine pin bumped to `>=0.31` — nothing new filed). Findings
-  doc: `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
+  (helixgen 0.31, engine pin bumped to `>=0.31` — nothing new filed).
+  Adversarial review of the suite then found three more real-port defects the
+  shape-only plan assertions had passed over — `plan_prune_irs` read report
+  keys the engine never emits (so a destructive confirm modal always claimed
+  there was nothing to prune), and `prune_irs`/`delete_ir` hardcoded `ok=True`
+  over reports carrying the engine's refusals — all fixed, with the plan test
+  now cross-checked against `device ir-prune --json`. Findings doc:
+  `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
 - **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
   push** — `RealDevicePort` returns `ok=False` for these; the engine change
   lands in helixgen-core first (ref #3's stable-API ask).

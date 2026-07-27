@@ -32,9 +32,13 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 - TDD throughout: failing test first, then minimal implementation.
 - **Live device suite (`tests/live/`) is opt-in.** Default `pytest` run and CI
   hard-skip it at collection — green, offline, no device writes possible. To run
-  against real hardware: `HELIXGEN_TUI_LIVE=1 python3 -m pytest tests/live -q`
-  (device tests also need the Stadium's ZMQ port 2002 TCP-reachable;
-  `HELIXGEN_HELIX_IP` overrides the persisted device record). Safety posture:
+  against real hardware: `HELIXGEN_TUI_LIVE=1 uv run pytest tests/live -q`
+  (also needs helixgen >=0.31 — below that the suite fails fast rather than
+  presenting core #38's IR-listing bug as a TUI regression — an ingested block
+  library, the Stadium's ZMQ port 2002 TCP-reachable, and a resolvable device
+  IP: `HELIXGEN_HELIX_IP`, else a `helixgen device discover` record, since the
+  scratch home has none. Missing library/IP/device = skip, not fail; `-m live`
+  selects the suite). Safety posture:
   all local helixgen state redirected to scratch, upfront device backup,
   session-failing device state guard, `HGTEST`-prefixed artifacts only, session
   `all` advisory lease held for the run. Normative details + exclusions

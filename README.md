@@ -101,5 +101,21 @@ uv run helixgen-tui    # run the app
 uv build               # sdist + wheel
 ```
 
+The suite is offline by default: `tests/live/` (the real device port against
+real hardware, real device writes) hard-skips at collection unless
+`HELIXGEN_TUI_LIVE=1` — the ~20 skips in a normal run are that gate. To run it
+against a Helix Stadium on the LAN:
+
+```sh
+HELIXGEN_TUI_LIVE=1 uv run pytest tests/live -q
+```
+
+It needs port 2002 TCP-reachable, an ingested block library, and a resolvable
+device IP (`HELIXGEN_HELIX_IP`, else a `helixgen device discover` record) —
+without any of those it skips rather than fails. All local helixgen state is
+redirected to a scratch dir for the run and every artifact is `HGTEST`-prefixed;
+the safety model and the deliberately excluded verbs are documented in
+`tests/live/conftest.py`.
+
 CI (GitHub Actions) runs ruff + pytest on every PR and push to `main`;
 `publish.yml` releases to PyPI via OIDC trusted publishing on `v*` tags.
