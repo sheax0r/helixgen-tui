@@ -279,6 +279,17 @@ class IrsScreen(LibrarianScreen):
         table = self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable)
         placeholder = self.query_one(f"#{_DEVICE_PLACEHOLDER_ID}", Static)
         if not result.ok or result.value is None:
+            # Say WHY, don't assume offline. A non-connect abort on a reachable
+            # device (a strict listing over a truncated reply) now fails soft
+            # with the engine's remediation text while the header stays
+            # connected — the hardcoded "device offline" contradicted it and
+            # threw the only copy of that text away. The offline case still
+            # reads exactly as before: its message IS "device offline".
+            placeholder.update(
+                f"unavailable — {result.message}"
+                if result.message
+                else _DEVICE_PLACEHOLDER_TEXT
+            )
             self._device_irs = []
             self._device_pane.rebuild_filtered()
             # Drop any pending rename target too: the list it referred to is

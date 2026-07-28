@@ -80,11 +80,18 @@ def _snapshot_real_home(
     """
     if not root.exists():
         return None
-    return {
-        str(p): p.stat().st_mtime
-        for p in root.rglob("*")
-        if locks not in p.parents and p != locks and ".git" not in p.relative_to(root).parts
-    }
+    snapshot: dict[str, float] = {}
+    for p in root.rglob("*"):
+        if locks in p.parents or p == locks or ".git" in p.relative_to(root).parts:
+            continue
+        try:
+            snapshot[str(p)] = p.stat().st_mtime
+        except FileNotFoundError:
+            # Vanished between the walk and the stat — another helixgen
+            # process pruning a temp file. Raising here would replace the
+            # state-leak assertion with a traceback out of session teardown.
+            continue
+    return snapshot
 
 
 @pytest.fixture(autouse=True, scope="session")

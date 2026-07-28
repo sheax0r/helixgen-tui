@@ -86,7 +86,11 @@ def test_plan_sync_all(real_port):
     shipped with. Shape plus a line count can't tell those apart."""
     from helixgen.device.manifest import SetlistManifest
 
-    expected = list(SetlistManifest.load().setlists())
+    manifest = SetlistManifest.load()
+    # Only the mirror-enabled setlists: `sync_all` runs
+    # `sync_setlists(setlists=None)`, which never touches local-only drafts.
+    expected = [s for s in manifest.setlists() if manifest.is_synced(s)]
+    drafts = [s for s in manifest.setlists() if not manifest.is_synced(s)]
     plan = real_port.plan_sync_all(gc=False)
     _assert_plan(plan)
     if expected:
@@ -94,7 +98,9 @@ def test_plan_sync_all(real_port):
         for name in expected:
             assert any(line.startswith(f"{name} (") for line in plan.lines), (name, plan.lines)
     else:
-        assert plan.lines == ("(no setlists to sync)",)
+        assert plan.lines == ("(no synced setlists to sync)",)
+    for name in drafts:
+        assert not any(line.startswith(f"{name} (") for line in plan.lines), (name, plan.lines)
     gc_plan = real_port.plan_sync_all(gc=True)
     _assert_plan(gc_plan)
     assert len(gc_plan.lines) == len(plan.lines) + 1  # the GC line

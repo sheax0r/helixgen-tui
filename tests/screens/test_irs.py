@@ -807,3 +807,23 @@ async def test_a_failed_device_refresh_drops_the_pending_rename_target():
 
         assert screen._renamed_to is None
         assert screen.query_one("#irs-device-table", DataTable).display is False
+
+
+async def test_a_reachable_device_read_failure_shows_the_engine_message():
+    """A non-connect abort (a strict listing over a truncated reply) fails soft
+    with the header still connected. The placeholder used to claim "device
+    offline" regardless, contradicting the header and discarding the only copy
+    of the engine's remediation text."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        screen = app.screen
+
+        screen._apply_device_irs(
+            QueryResult(ok=False, value=None, message="list_device_irs: incomplete IR listing")
+        )
+        await pilot.pause()
+
+        text = str(screen.query_one("#irs-device-placeholder").render())
+        assert "incomplete IR listing" in text
+        assert "device offline" not in text

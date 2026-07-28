@@ -806,3 +806,24 @@ def test_plan_sync_all_raises_rather_than_planning_over_a_broken_manifest(tmp_ho
     monkeypatch.setattr(manifest_mod.SetlistManifest, "load", staticmethod(boom))
     with pytest.raises(KeyError):
         build_core().device.plan_sync_all(gc=True)
+
+
+def test_plan_sync_all_lists_only_the_setlists_sync_all_will_touch(tmp_home, monkeypatch):
+    """The confirm runs ``sync_setlists(setlists=None)``, which maintains only
+    ``synced=True`` setlists — pinned against the engine's own source below.
+    Listing drafts promised a sync the device never gets, and the footer then
+    reported success over them."""
+    import inspect
+
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    src = inspect.getsource(setlist_sync.sync_setlists)
+    assert "if manifest.is_synced(s)" in src, "engine's --all target selection changed"
+
+    _seed_tone_in_setlist("Gig 1", synced=True, stem="gig-tone", preset="Gig Tone")
+    _seed_tone_in_setlist("Draft", synced=False, stem="draft-tone", preset="Draft Tone")
+
+    plan = build_core().device.plan_sync_all(gc=False)
+    assert any(line.startswith("Gig 1 (") for line in plan.lines), plan.lines
+    assert not any(line.startswith("Draft (") for line in plan.lines), plan.lines

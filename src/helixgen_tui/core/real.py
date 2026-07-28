@@ -19,6 +19,11 @@ failure is ``DeviceUnreachable``. Every other engine error propagates so the
 caller can fail soft with the engine's remediation text — ``_op`` turns it into
 ``OpResult(ok=False)`` for mutations, and ``DeviceService.query``'s error branch
 reports it for reads, neither of which flips the app offline.
+
+``push_ir`` is the one verb that can't classify: ``upload_missing_irs`` opens
+its own connection and never raises — a connect fault comes back as a per-hash
+``ok=False`` with the reason in ``note`` — so a device that vanished mid-push
+reports the engine's note and the header corrects on the next probe.
 """
 
 from __future__ import annotations
@@ -319,13 +324,21 @@ class RealDevicePort:
         RAISES rather than becoming plan text (same rule as
         ``plan_prune_irs``). Swallowing a broken manifest rendered the literal
         "(no setlists to sync)" and then let the confirm run a real sync,
-        indistinguishable from the genuine empty case."""
+        indistinguishable from the genuine empty case.
+
+        Only ``synced=True`` setlists are listed, because that is exactly what
+        the confirm then runs: ``sync_setlists(setlists=None)`` maintains the
+        mirror-enabled setlists and never touches local-only drafts. Previewing
+        every manifest setlist promised drafts would sync, and the footer then
+        reported success over setlists the device never saw."""
         from helixgen.device.manifest import SetlistManifest
 
         manifest = SetlistManifest.load()
         lines: tuple[str, ...] = tuple(
-            f"{s} ({len(manifest.tones_in(s))} tones)" for s in manifest.setlists()
-        ) or ("(no setlists to sync)",)
+            f"{s} ({len(manifest.tones_in(s))} tones)"
+            for s in manifest.setlists()
+            if manifest.is_synced(s)
+        ) or ("(no synced setlists to sync)",)
         if gc:
             lines = (*lines, "GC: remove pool presets no setlist references")
         return MutationPlan(title="Sync all setlists to the device", lines=lines)
