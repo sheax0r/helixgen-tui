@@ -11,6 +11,7 @@ from __future__ import annotations
 import errno
 import inspect
 import os
+import socket
 from contextlib import contextmanager
 
 import pytest
@@ -414,6 +415,7 @@ def test_sync_tone_in_synced_setlist_syncs_only_that_setlist(tmp_home, monkeypat
 
     def fake_sync(manifest, *, ip=None, port=None, setlists=None, gc=False, **k):
         captured["setlists"] = setlists
+        captured["gc"] = gc
         return _canned_report(installed=[setlists[0]] if setlists else [])
 
     monkeypatch.setattr(setlist_sync, "sync_setlists", fake_sync)
@@ -422,6 +424,34 @@ def test_sync_tone_in_synced_setlist_syncs_only_that_setlist(tmp_home, monkeypat
     result = build_core().device.sync_tone(name)
     assert result.ok is True
     assert captured["setlists"] == ["Gig 1"]
+    # a single-tone sync must never GC: that phase deletes every device pool
+    # preset the manifest doesn't reference
+    assert captured["gc"] is False
+
+
+def test_sync_forwards_gc_verbatim(tmp_home, monkeypatch):
+    """``gc`` is the most destructive flag the port passes — the GC phase
+    deletes every device pool preset no setlist references. No test asserted it
+    round-tripped, so hardcoding ``gc=True`` inside ``_sync`` (turning every
+    ``S``/``A`` press into a device-wide GC) left the suite green; the live
+    suite deliberately excludes ``gc=True``, so it can't catch it either."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    seen: list[bool] = []
+
+    def record(manifest, *, ip=None, port=None, setlists=None, gc=False, **k):
+        seen.append(gc)
+        return _canned_report()
+
+    monkeypatch.setattr(setlist_sync, "sync_setlists", record)
+    _seed_tone_in_setlist("Gig 1", synced=True)
+
+    device = build_core().device
+    device.sync_all(gc=False)
+    device.sync_all(gc=True)
+    device.sync_setlist("Gig 1", gc=False)
+    assert seen == [False, True, False]
 
 
 # --- Fix 4: the IR prune/delete verbs read the engine's real report shape ---
@@ -455,6 +485,29 @@ def test_plan_prune_irs_lists_the_orphans_the_engine_reports(tmp_home, monkeypat
     plan = build_core().device.plan_prune_irs()
     assert "Old Cab" in " ".join(plan.lines)
     assert "no unreferenced" not in " ".join(plan.lines)
+
+
+def test_prune_previews_dry_and_only_the_confirm_executes(tmp_home, monkeypatch):
+    """The one flag that separates a preview from a real delete. Every other
+    prune stub swallows kwargs, so flipping ``plan_prune_irs``' ``execute=False``
+    to True — the ConfirmModal preview deleting the user's IRs before any
+    confirmation — kept the whole offline suite green."""
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    seen: list[dict] = []
+
+    def record(**k):
+        seen.append(k)
+        return _prune_report(orphans=[{"name": "Old Cab", "hash": "abc"}])
+
+    monkeypatch.setattr(maintenance, "ir_prune", record)
+
+    build_core().device.plan_prune_irs()
+    assert seen[-1]["execute"] is False
+
+    build_core().device.prune_irs()
+    assert seen[-1]["execute"] is True
 
 
 def test_plan_prune_irs_renders_the_empty_case(tmp_home, monkeypatch):
@@ -598,23 +651,12 @@ def test_prune_irs_healthy_device_aborts_are_not_reported_as_offline(
     assert message in result.message
 
 
-def test_prune_irs_counts_deletions_and_fails_on_engine_errors(tmp_home, monkeypatch):
+def test_prune_irs_fails_on_engine_errors(tmp_home, monkeypatch):
     """``ir_prune`` accumulates per-IR refusals in ``errors`` and sets ok=False
     WITHOUT raising — a discarded report reported success over a failed prune."""
     from helixgen.device import maintenance
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
-    monkeypatch.setattr(
-        maintenance,
-        "ir_prune",
-        # the engine stamps ``file_removed`` on every deleted entry; True is the
-        # clean case (see the wedged-file tests below)
-        lambda **k: _prune_report(deleted=[{"name": "Old Cab", "file_removed": True}]),
-    )
-    result = build_core().device.prune_irs()
-    assert result.ok is True
-    assert "pruned 1 unreferenced device IR(s)" == result.message
-
     monkeypatch.setattr(
         maintenance,
         "ir_prune",
@@ -876,6 +918,41 @@ def test_transport_oserror_from_a_mutation_still_flips_the_app_offline(tmp_home,
     monkeypatch.setattr(_backup, "backup_setlist", boom)
     with pytest.raises(DeviceUnreachable):
         build_core().device.backup()
+
+
+def test_dns_failure_flips_the_app_offline(tmp_home, monkeypatch):
+    """A hostname that stops resolving is a device that is gone, but
+    ``gaierror`` carries an EAI code — not a transport errno — so the errno
+    table alone classifies it as a local fault and leaves the header claiming
+    "connected". The ``isinstance`` arm is what covers it, and nothing else
+    exercises it."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "helix.local")
+
+    def boom(*a, **k):
+        raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided")
+
+    monkeypatch.setattr(setlist_sync, "sync_setlists", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.sync_all(gc=False)
+
+
+def test_oserror_without_an_errno_fails_soft(tmp_home, monkeypatch):
+    """The other side of classifying on the errno: an unlabelled OSError
+    (``errno`` is None) is local by default, so an unknown disk fault reports
+    its own text instead of blanking the app over a reachable device."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(*a, **k):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(setlist_sync, "sync_setlists", boom)
+    result = build_core().device.sync_all(gc=False)
+    assert result.ok is False
+    assert "disk went away" in result.message
 
 
 def test_sync_applies_the_errno_split_without_going_through_session(tmp_home, monkeypatch):

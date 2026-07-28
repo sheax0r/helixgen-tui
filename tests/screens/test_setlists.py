@@ -299,6 +299,28 @@ async def test_capital_a_shows_plan_lines_and_y_syncs_all():
         assert ("sync_all", (False,)) in port.calls
 
 
+async def test_capital_a_planning_failure_refuses_without_modal():
+    """``plan_sync_all`` RAISES on a broken manifest rather than narrating it,
+    so the screen's failure branch is the only thing between that raise and a
+    ConfirmModal over an unknown sync — and `y` on that modal runs a real
+    sync_all, mirror deletes included."""
+
+    class _RaisingPlanPort(FakeDevicePort):
+        def plan_sync_all(self, gc: bool):
+            raise RuntimeError("manifest unreadable")
+
+    port = _RaisingPlanPort(state=_CONNECTED)
+    app = _app(device=port)
+    async with app.run_test() as pilot:
+        await _goto_setlists(pilot)
+        await pilot.press("A")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal)
+        assert not any(call[0] == "sync_all" for call in port.calls)
+        footer = app.screen.query_one(StatusFooter)
+        assert "manifest unreadable" in footer.last_action
+
+
 async def test_capital_a_offline_refuses_without_modal():
     port = FakeDevicePort()  # offline
     app = _app(device=port)

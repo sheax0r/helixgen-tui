@@ -2,7 +2,7 @@
 
 Hardware: Helix Stadium XL, fw 1.3.2 (build 1340), at 192.168.4.84.
 Engine: `helixgen` 0.32.0. Plan:
-`docs/plans/2026-07-28-live-smoke-closeout.md`. Design:
+`docs/plans/completed/2026-07-28-live-smoke-closeout.md`. Design:
 `docs/superpowers/specs/2026-07-28-live-smoke-suite-closeout-design.md`.
 
 ## Task 1 — hardware re-run
@@ -105,3 +105,12 @@ and a review-loop circuit breaker — is filed as workspace backlog #100.
 - **#25** live-suite brittleness (unfixed review findings)
 - **#26** the fix for the confirmed timeout defect — its own brainstorm
 - **#27** live-suite safety helpers have no offline test
+- **#28** prune is unreachable in the app on any library with one missing
+  `.hsp`, and `prune_irs(execute=True)` has **no hardware coverage** — the run
+  above skips it, and that skip is a permanent property of this device, not a
+  transient one. It also explains the "1 skipped" in Task 1
+- **#29** the `gc` half of sync is on the port surface but folded by nothing
+- **#30** device IR delete/rename address by display name, push by hash
+- **#31** engine: `sync_setlists` reports nothing when the device *rejects* a
+  mirror delete
+- **#32** `sync_tone` can mirror-delete unrelated tones with no confirm

@@ -52,7 +52,10 @@ before any code.
   Close-out design + findings:
   `docs/superpowers/specs/2026-07-28-live-smoke-suite-closeout-design.md`,
   `docs/superpowers/specs/2026-07-28-live-smoke-suite-findings.md`.
-  Deferrals: #25, #26 (fix), #27.
+  Deferrals: #25, #26 (fix), #27, #28, #29, #30, #31, #32 — #28 in particular
+  qualifies the result above: the one skip is `prune_irs(execute=True)`, which
+  has no hardware coverage at all on this device and cannot get any until that
+  gate is made satisfiable.
 - **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
   push** — `RealDevicePort` returns `ok=False` for these; the engine change
   lands in helixgen-core first (ref #3's stable-API ask).

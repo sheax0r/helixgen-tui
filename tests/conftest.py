@@ -32,6 +32,13 @@ def tmp_home(tmp_path, monkeypatch):
         # ignoring $HELIXGEN_HOME. Without this a test exercising `backup()`
         # writes into the developer's REAL backup dir.
         "HELIXGEN_DEVICE_BACKUPS": home / "device-backups",
+        # Same class, and a READ leak the real-home guard cannot catch:
+        # `manifest._legacy_ledger_path()` reads $HELIXGEN_DEVICE_SLOTS, else a
+        # hardcoded `Path.home()/.helixgen/device-slots.json`, ignoring
+        # $HELIXGEN_HOME. `SetlistManifest.load()` reaches it on every first
+        # load, so without this a developer with a legacy ledger gets their
+        # REAL setlists migrated into the test manifest.
+        "HELIXGEN_DEVICE_SLOTS": home / "device-slots.json",
     }
     for name, path in paths.items():
         monkeypatch.setenv(name, str(path))

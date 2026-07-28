@@ -73,7 +73,9 @@ every `✓` setlist and never opts a draft in — so a library where nothing has
 been synced yet shows *(no synced setlists to sync)* in the confirm. Both also
 remove device presets for tones you have **unsynced** since the last run,
 which is why the sync-all confirm says so; a preset a live setlist still
-references is left alone and named in the status bar.
+references is left alone and named in the status bar. `S` on the **Library**
+tab runs the same engine call for one tone's setlists, so it carries the same
+mirror deletes — with no confirm at all; tracked in `docs/BACKLOG.md` #32.
 
 **Offline-first:** the app works fully with no device on the LAN — Library,
 Setlists, and IRs stay browsable from local state. Device-mutating actions
@@ -82,7 +84,10 @@ the status bar when no Helix is reachable, and reconnect automatically (or
 via `r` on the Device tab) once one is. A device that *is* reachable but
 refuses or aborts an operation is a third state: the header stays connected
 and the panel or status bar shows the engine's own reason and remediation
-text, rather than the app going offline over one dropped frame.
+text, rather than the app going offline over one dropped frame. The exception
+is a background *probe* that itself fails: the header does go offline, carrying
+`probe failed: …` as its reason, because a probe that can't complete says
+nothing about whether the device is usable.
 
 **Design principle: slots are invisible.** The UI speaks in tones and
 setlists only — slot addresses like `5A` are an implementation detail the
@@ -93,7 +98,7 @@ user never sees or types.
 > single-pool-preset delete). The UI surfaces a clear reason until then. See
 > `docs/BACKLOG.md` #6.
 >
-> Two device-IR verbs can report something short of a clean success, both by
+> Three device-IR verbs can report something short of a clean success, all by
 > design: deleting an IR (`d`) can half-succeed — the Helix removes the registry
 > entry but leaves the backing file behind, reported as *"registry entry
 > removed; backing file left on the device"*; clean that up with `helixgen
@@ -102,7 +107,10 @@ user never sees or types.
 > confirm, whenever the engine can't verify some local tones' IR references —
 > a confirm it could only fail is worse than no confirm. One library tone with a
 > missing `.hsp` is enough to refuse every prune from then on, and the TUI offers
-> no way to fix it from inside the app; tracked in `docs/BACKLOG.md` #28.
+> no way to fix it from inside the app; tracked in `docs/BACKLOG.md` #28. And
+> pushing an IR (`p`) surfaces the engine's own refusal verbatim — e.g. *"IR
+> 'foo': hash_mismatch"* — where earlier versions reported a bare success over
+> a push that never landed.
 >
 > Also known: long device operations — *sync all* and *prune* especially — can
 > report `timed out` in the status bar after ~5s while the operation is still
@@ -134,7 +142,7 @@ uv build               # sdist + wheel
 
 The suite is offline by default: `tests/live/` (the real device port against
 real hardware, real device writes) hard-skips at collection unless
-`HELIXGEN_TUI_LIVE=1` — the ~20 skips in a normal run are that gate. To run it
+`HELIXGEN_TUI_LIVE=1` — every skip in a normal run is that gate. To run it
 against a Helix Stadium on the LAN:
 
 ```sh

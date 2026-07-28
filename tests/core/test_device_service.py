@@ -8,6 +8,7 @@ stays well under a second. No real device is ever contacted.
 
 from __future__ import annotations
 
+import threading
 import time
 
 from helixgen_tui.core.device import DeviceService, QueryResult
@@ -221,9 +222,13 @@ def test_run_timeout_reports_failure_while_the_write_still_lands():
 
     landed: list[str] = []
     results: list[OpResult] = []
+    release = threading.Event()
 
     def _slow_write() -> OpResult:
-        time.sleep(0.2)
+        # Gated on the test rather than a wall-clock sleep: a scheduling stall
+        # longer than the sleep would let the write land before the timeout is
+        # observed, failing the precondition below on nothing but load.
+        release.wait(2.0)
         landed.append("device mutated")  # the write the user was told failed
         return OpResult(ok=True, message="pruned")
 
@@ -237,6 +242,7 @@ def test_run_timeout_reports_failure_while_the_write_still_lands():
     assert "timed out" in results[-1].message
     assert not landed, "precondition: the write had not finished at report time"
 
+    release.set()
     deadline = time.monotonic() + 0.9
     while not landed and time.monotonic() < deadline:
         time.sleep(0.005)
