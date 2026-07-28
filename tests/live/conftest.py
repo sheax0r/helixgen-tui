@@ -398,17 +398,25 @@ def _sweep_stale_hgtest_artifacts(cli) -> list[str]:
 
     A delete that FAILS is fatal: the leftover would be absorbed into the
     baseline, the teardown diff would then match, and the suite would report a
-    clean device while its own junk sat on it."""
+    clean device while its own junk sat on it. A failed or unparsable LISTING
+    is fatal for the same reason — it sweeps nothing while looking like it
+    found nothing, so it must be reported, never skipped."""
     swept, failed = [], []
     for kind, list_args, id_key, delete_args in (
         ("preset", ("device", "list", "--json"), "cid_", ("device", "delete")),
         ("setlist", ("device", "setlists", "--json"), "name", ("device", "setlist", "delete")),
         ("IR", ("device", "list-irs", "--json"), "hash", ("device", "delete-ir")),
     ):
-        code, out, _ = cli(*list_args)
+        code, out, err = cli(*list_args)
         if code != 0:
+            failed.append(f"{kind} listing failed: {(err or out).strip()}")
             continue
-        for m in json.loads(out):
+        try:
+            rows = json.loads(out)
+        except ValueError as exc:
+            failed.append(f"{kind} listing returned unparsable JSON: {exc}")
+            continue
+        for m in rows:
             name = m.get("name") or ""
             if not name.startswith(HGTEST):
                 continue
