@@ -291,11 +291,18 @@ class RealDevicePort:
         skipped = len(pool.get("skipped") or [])
         deleted = len(pool.get("deleted") or [])
         refused = [str(n) for n in (pool.get("delete_skipped") or [])]
-        failed = len(report.get("errors") or [])
+        errors = [str(e) for e in (report.get("errors") or [])]
+        failed = len(errors)
         summary = (
             f"{installed} installed, {updated} updated, {deleted} deleted, "
             f"{skipped} skipped, {failed} failed"
         )
+        if errors:
+            # The footer is the only diagnostic surface in the app: a bare
+            # "2 failed" leaves no way to learn WHICH tones failed or why, and
+            # an IR-upload soft failure inside a sync (the same `note` push_ir
+            # surfaces) would be invisible. Same fold as `prune_irs`.
+            summary += f": {errors[0]}"
         if refused:
             summary += (
                 " — still on the device, a live setlist references them: "
@@ -561,7 +568,17 @@ class RealDevicePort:
 
             ip = self._resolve_ip()
             with self._session(ip) as client:
-                entries = _backup.backup_setlist(client)
+                # strict=True, for the same reason as `list_device_irs`, only
+                # worse here: `backup_setlist`'s own listing is the engine's
+                # non-strict default, which reads a timeout or a truncated
+                # reply as an EMPTY list. A dropped frame then backs up nothing
+                # and this reports a green "backed up 0 preset(s)" over the
+                # user's only restore point, immediately before they
+                # prune/sync/delete. Strict raises instead, and the abort fails
+                # soft with the engine's retry text.
+                entries = _backup.backup_setlist(
+                    client, presets=client.list_presets(strict=True)
+                )
             return OpResult(ok=True, message=f"backed up {len(entries)} preset(s)")
 
         return self._op("backup", _run)

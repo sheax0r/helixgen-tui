@@ -27,6 +27,11 @@ def tmp_home(tmp_path, monkeypatch):
         "HELIXGEN_PREFS": home / "preferences.json",
         "HELIXGEN_LOCKS": home / "locks",
         "HELIXGEN_IRS": home / "irs",
+        # NOT home-derived in the engine: `backup.default_backup_dir()` reads
+        # $HELIXGEN_DEVICE_BACKUPS, else a hardcoded `Path.home()/.helixgen`,
+        # ignoring $HELIXGEN_HOME. Without this a test exercising `backup()`
+        # writes into the developer's REAL backup dir.
+        "HELIXGEN_DEVICE_BACKUPS": home / "device-backups",
     }
     for name, path in paths.items():
         monkeypatch.setenv(name, str(path))

@@ -289,6 +289,23 @@ def test_sync_fails_when_the_engine_refuses_a_mirror_delete(tmp_home, monkeypatc
     assert "Still Referenced" in result.message
 
 
+def test_sync_failures_name_what_failed_not_just_how_many(tmp_home, monkeypatch):
+    """The footer is the only diagnostic surface in the app. Folding `errors`
+    to a bare count destroyed the engine's per-tone remediation text at exactly
+    the point the fail-soft rule exists to preserve it — including an IR-upload
+    soft failure arriving via sync instead of `p`."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    report = _canned_report(errors=["tone 'Riff': slot 3B occupied", "tone 'Lead': timeout"])
+    monkeypatch.setattr(setlist_sync, "sync_setlists", lambda *a, **k: report)
+
+    result = build_core().device.sync_all(gc=False)
+    assert result.ok is False
+    assert "2 failed" in result.message
+    assert "slot 3B occupied" in result.message
+
+
 def test_sync_report_keys_the_port_reads_are_the_engine_s():
     """Every ``pool`` bucket the fold reads is pinned to the installed engine's
     SOURCE, not its docstring — a renamed bucket must break the test that folds
@@ -700,7 +717,7 @@ def test_local_disk_oserror_is_not_reported_as_an_offline_device(tmp_home, monke
     from helixgen.device import backup as _backup
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
-    _connectable_client(monkeypatch)
+    _connectable_client(monkeypatch, list_presets=lambda **k: [])
 
     def boom(client, *a, **k):
         raise OSError(code, os.strerror(code))
@@ -711,6 +728,52 @@ def test_local_disk_oserror_is_not_reported_as_an_offline_device(tmp_home, monke
     assert os.strerror(code) in result.message
 
 
+def test_backup_lists_strictly_so_a_dropped_frame_is_not_an_empty_backup(tmp_home, monkeypatch):
+    """`backup_setlist`'s own listing is the engine's NON-strict default, which
+    reads a timeout or a truncated reply as an empty list — so a dropped frame
+    wrote a manifest with zero entries and the port reported a green "backed up
+    0 preset(s)" over the user's only restore point, right before a
+    prune/sync/delete. The port must feed it a STRICT listing instead."""
+    from helixgen.device import backup as _backup
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(monkeypatch, list_presets=_strict_listing_that_drops)
+    monkeypatch.setattr(_backup, "backup_setlist", _fail_if_called)
+
+    result = build_core().device.backup()
+    assert result.ok is False
+    assert "refusing to treat it as empty" in result.message
+
+
+def _strict_listing_that_drops(*, strict=False):
+    from helixgen.device import HelixError
+
+    if not strict:
+        return []  # what the non-strict default does with a dropped reply
+    raise HelixError(
+        "no reply listing container -2 (timeout or connection drop); "
+        "refusing to treat it as empty — retry, and reboot the Helix if it "
+        "persists"
+    )
+
+
+def _fail_if_called(*a, **k):
+    raise AssertionError("backup_setlist ran on a listing that never arrived")
+
+
+def test_backup_setlist_still_takes_the_presets_the_port_injects():
+    """Pinned to the engine's SOURCE: the `presets` kwarg the fix relies on,
+    and the non-strict fallback that makes injecting it necessary. If the
+    engine drops the kwarg, `backup()` silently reverts to the empty-backup
+    bug rather than failing here."""
+    from helixgen.device import backup as _backup
+
+    assert "presets" in inspect.signature(_backup.backup_setlist).parameters
+    source = inspect.getsource(_backup.backup_setlist)
+    assert "if presets is None:" in source
+    assert "client.list_presets(container)" in source  # i.e. strict=False
+
+
 def test_transport_oserror_from_a_mutation_still_flips_the_app_offline(tmp_home, monkeypatch):
     """The other half of the errno split: the classifier must not be so narrow
     that a device genuinely off the LAN fails soft in the footer. EHOSTUNREACH
@@ -719,7 +782,7 @@ def test_transport_oserror_from_a_mutation_still_flips_the_app_offline(tmp_home,
     from helixgen.device import backup as _backup
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
-    _connectable_client(monkeypatch)
+    _connectable_client(monkeypatch, list_presets=lambda **k: [])
 
     def boom(client, *a, **k):
         raise OSError(errno.EHOSTUNREACH, "No route to host")
@@ -729,14 +792,16 @@ def test_transport_oserror_from_a_mutation_still_flips_the_app_offline(tmp_home,
         build_core().device.backup()
 
 
-def _connectable_client(monkeypatch):
+def _connectable_client(monkeypatch, **methods):
     """Replace ``HelixClient`` with a stub that connects. Keeps the port's REAL
-    ``_session`` in the path — the mapping under test lives there."""
+    ``_session`` in the path — the mapping under test lives there. Extra
+    keyword args attach client methods the verb under test calls."""
     import helixgen.device as device_pkg
 
     class _Client:
         def __init__(self, ip, port=None):
-            pass
+            for name, fn in methods.items():
+                setattr(self, name, fn)
 
         def __enter__(self):
             return self

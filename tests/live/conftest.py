@@ -307,7 +307,17 @@ def cli(_live_env):
     try:
         yield run
     finally:
-        run("device", "unlock", "--ip", DEVICE_IP)
+        # Never silent: the lease lives in the REAL lock root with a 1800s TTL,
+        # so a failed release wedges every other helixgen process on this
+        # machine for up to half an hour. Same visible-warning posture as the
+        # other teardown helpers here.
+        code, out, err = run("device", "unlock", "--ip", DEVICE_IP)
+        if code != 0:
+            print(
+                "\n[tests/live] WARNING: could not release the session 'all' "
+                f"device lease ({(err or out).strip()}) — it expires within "
+                "1800s, or clear it now with `helixgen device unlock --force`"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -341,6 +351,23 @@ def device_backup(device: str, cli, scratch: Path) -> Path:
     code, out, err = cli("device", "backup", "--dir", dest, timeout=600)
     assert code == 0, f"upfront `device backup` failed: {err or out}"
     assert (dest / "manifest.json").exists()
+    # `device backup` lists NON-strictly, so a dropped frame exits 0, writes a
+    # manifest with zero entries, and `manifest.json exists` passes over a
+    # restore point that restores nothing — an inert safety net, right before
+    # the session starts installing/deleting/syncing on real hardware.
+    # Cross-check against a STRICT listing (the only thing that tells a genuine
+    # empty pool apart from a dropped reply): it raises rather than under-count.
+    from helixgen.device import HelixClient
+
+    with HelixClient(device, DEVICE_PORT) as h:
+        on_device = h.list_presets(strict=True)
+    backed_up = json.loads((dest / "manifest.json").read_text())["entries"]
+    assert len(backed_up) == len(on_device), (
+        f"upfront backup covers {len(backed_up)} preset(s) but the device has "
+        f"{len(on_device)} — partial/empty backup (the engine's default "
+        "listing reads a dropped frame as an empty list); re-run rather than "
+        "mutate the device without a restore point"
+    )
     return dest
 
 
