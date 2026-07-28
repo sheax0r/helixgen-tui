@@ -56,7 +56,13 @@ class DevicePort(Protocol):
 
     def sync_setlist(self, name: str, gc: bool) -> OpResult: ...
 
-    def plan_sync_all(self, gc: bool) -> MutationPlan: ...
+    def plan_sync_all(self, gc: bool) -> MutationPlan:
+        """A ``plan_*`` behind a destructive confirm RAISES on any condition
+        the confirm couldn't survive — never plan text saying so, which would
+        offer a confirmable write that can only fail. Callers must therefore go
+        through ``DeviceService.query``, which reports the failure instead of
+        opening the modal. Same for ``plan_prune_irs``."""
+        ...
 
     def sync_all(self, gc: bool) -> OpResult: ...
 
@@ -70,7 +76,10 @@ class DevicePort(Protocol):
 
     def delete_ir(self, ir_name: str) -> OpResult: ...
 
-    def plan_prune_irs(self) -> MutationPlan: ...
+    def plan_prune_irs(self) -> MutationPlan:
+        """Talks to the device, so it can also raise DeviceUnreachable. See
+        ``plan_sync_all`` for the raise-don't-narrate rule."""
+        ...
 
     def prune_irs(self) -> OpResult: ...
 

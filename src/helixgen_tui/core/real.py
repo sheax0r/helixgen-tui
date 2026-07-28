@@ -8,15 +8,24 @@ socket — so the app comes up offline and ``build_core()`` still works.
 
 Every networked verb is a thin delegation to the helixgen device layer
 (``HelixClient``, ``setlist_sync``, ``maintenance``, ``backup``, ``locks``) per
-docs/superpowers/plans/core-api-notes.md — signature-verified only, never run
-against hardware in this build. ``make_active`` is the one place that references
-core's load verb (``HelixClient.load_preset``); it must never touch a real Helix
-here. All the connection/failure mapping funnels through ``_session``.
+docs/superpowers/plans/core-api-notes.md. The opt-in live suite
+(``tests/live/``, ``HELIXGEN_TUI_LIVE=1``) exercises these verbs — including
+``make_active``'s ``HelixClient.load_preset`` — against a real Helix; the
+default offline run never can.
+
+Failure classification happens ONCE, in ``_session`` (and in the two verbs that
+connect themselves, ``plan_prune_irs``/``ir_prune``): only a connect-class
+failure is ``DeviceUnreachable``. Every other engine error propagates so the
+caller can fail soft with the engine's remediation text — ``_op`` turns it into
+``OpResult(ok=False)`` for mutations, and ``DeviceService.query``'s error branch
+reports it for reads, neither of which flips the app offline.
 """
 
 from __future__ import annotations
 
+import errno
 import pathlib
+import socket
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -53,6 +62,41 @@ def _is_connect_failure(exc: Exception) -> bool:
     return any(marker in str(exc) for marker in _CONNECT_FAILURES)
 
 
+#: The ``OSError`` errnos that mean TRANSPORT — the network half of the device
+#: layer. It also does LOCAL disk work under the same guards
+#: (``backup_setlist``'s mkdir + write_bytes, ``IrMapping.load``,
+#: ``ir_prune``'s manifest reads), so a blanket ``except OSError -> offline``
+#: reported ENOSPC/EACCES/EROFS as "device offline" — the exact
+#: misclassification ``_CONNECT_FAILURES`` exists to prevent, on the verbs with
+#: the largest non-network OSError surface. Classifying on the errno rather
+#: than the class is deliberate: ``ConnectionError`` misses EHOSTUNREACH and
+#: ENETUNREACH (a device simply off the LAN), which arrive as a plain
+#: ``OSError``. Like the connect messages, the transport errnos are a closed
+#: set and the local-disk ones are not.
+_TRANSPORT_ERRNOS = frozenset(
+    {
+        errno.ECONNREFUSED,
+        errno.ECONNRESET,
+        errno.ECONNABORTED,
+        errno.EHOSTUNREACH,
+        errno.EHOSTDOWN,
+        errno.ENETUNREACH,
+        errno.ENETDOWN,
+        errno.ENETRESET,
+        errno.ETIMEDOUT,
+        errno.EPIPE,
+    }
+)
+
+
+def _is_transport_oserror(exc: OSError) -> bool:
+    """True for an OSError that means the device is unreachable. A DNS failure
+    always is; otherwise it must carry a transport errno — an OSError with no
+    errno at all is treated as local, so an unlabelled disk failure fails soft
+    rather than blanking the app."""
+    return isinstance(exc, socket.gaierror) or exc.errno in _TRANSPORT_ERRNOS
+
+
 class RealDevicePort:
     """DevicePort over helixgen's device client. Offline-first, thin per verb."""
 
@@ -74,15 +118,29 @@ class RealDevicePort:
 
     @contextmanager
     def _session(self, ip: str) -> Iterator[object]:
-        """A connected ``HelixClient`` context; connect/socket failures become
-        ``DeviceUnreachable`` (so DeviceService flips the app offline)."""
+        """A connected ``HelixClient`` context, and the ONE place device
+        failures get classified.
+
+        Only a connect-class failure becomes ``DeviceUnreachable`` (so
+        DeviceService flips the app offline). Every other ``HelixError`` — a
+        strict listing on a truncated reply, a malformed frame, the engine
+        refusing an operation — is an abort on a REACHABLE device and
+        propagates unchanged, so ``_op`` can fail it soft and
+        ``DeviceService.query``'s error branch can report it without the header
+        lying about connectivity."""
         from helixgen.device import HelixClient, HelixError
 
         try:
             with HelixClient(ip, self._port) as client:
                 yield client
-        except (HelixError, OSError) as exc:
-            raise DeviceUnreachable(str(exc)) from exc
+        except HelixError as exc:
+            if _is_connect_failure(exc):
+                raise DeviceUnreachable(str(exc)) from exc
+            raise
+        except OSError as exc:
+            if _is_transport_oserror(exc):
+                raise DeviceUnreachable(str(exc)) from exc
+            raise
 
     def _op(self, label: str, fn) -> OpResult:
         """Run a mutating device closure -> OpResult. Connect failures raise
@@ -92,23 +150,19 @@ class RealDevicePort:
 
         try:
             return fn()
-        except DeviceUnreachable as exc:
-            # ``_session`` maps every HelixError to DeviceUnreachable, which is
-            # right for a READ (nothing to report but connectivity). For a
-            # MUTATION it is not: ``delete_ir``/``rename_ir`` reach the engine's
-            # strict ``-11`` listing through ``resolve_device_ir_live``, which
-            # raises HelixError on a truncated reply from a perfectly reachable
-            # device — and that flipped the whole app offline.
-            cause = exc.__cause__
-            if not isinstance(cause, HelixError) or _is_connect_failure(cause):
-                raise
-            return OpResult(ok=False, message=f"{label} failed: {cause}")
+        except DeviceUnreachable:
+            raise
         except HelixError as exc:
+            # The verbs that connect themselves (``sync``, ``push_ir``,
+            # ``prune_irs``) never pass through ``_session``, so classify here
+            # too — same rule, same closed set of connect markers.
             if _is_connect_failure(exc):
                 raise DeviceUnreachable(str(exc)) from exc
             return OpResult(ok=False, message=f"{label} failed: {exc}")
         except OSError as exc:
-            raise DeviceUnreachable(str(exc)) from exc
+            if _is_transport_oserror(exc):
+                raise DeviceUnreachable(str(exc)) from exc
+            return OpResult(ok=False, message=f"{label} failed: {exc}")
         except Exception as exc:  # noqa: BLE001 — surfaced to the footer as ok=False
             return OpResult(ok=False, message=f"{label} failed: {exc}")
 
@@ -138,9 +192,12 @@ class RealDevicePort:
         return {str(k): str(v) for k, v in info.items()}
 
     def list_device_irs(self) -> list[IrVM]:
+        # strict=True: the default listing reads a timeout or a truncated reply
+        # as an empty list, and this pane is what the user then pushes to and
+        # deletes from — an IR silently missing from it is worse than an error.
         ip = self._resolve_ip()
         with self._session(ip) as client:
-            rows = client.list_irs()
+            rows = client.list_irs(strict=True)
         return [
             IrVM(name=r.get("name") or "", pack=None, irhash=r.get("hash"), on_device=True)
             for r in rows
@@ -160,7 +217,12 @@ class RealDevicePort:
     # -- activate / sync ---------------------------------------------------
 
     def _pool_cid_for(self, client, tone_id: str) -> int | None:
-        for row in client.list_presets():
+        # strict=True: a missing row here becomes the definitive claim "'X' is
+        # not on the device". The default listing reads a timeout or a
+        # truncated reply as empty/partial, which would make that claim false
+        # on a healthy device; strict raises instead and the abort fails soft
+        # with the engine's retry text.
+        for row in client.list_presets(strict=True):
             if row.get("name") == tone_id:
                 return row.get("cid_")
         return None
@@ -253,16 +315,17 @@ class RealDevicePort:
         return self._sync(None, gc=gc, label="synced all setlists")
 
     def plan_sync_all(self, gc: bool) -> MutationPlan:
+        """The preview behind the sync-all ConfirmModal — so a planning failure
+        RAISES rather than becoming plan text (same rule as
+        ``plan_prune_irs``). Swallowing a broken manifest rendered the literal
+        "(no setlists to sync)" and then let the confirm run a real sync,
+        indistinguishable from the genuine empty case."""
         from helixgen.device.manifest import SetlistManifest
 
-        try:
-            manifest = SetlistManifest.load()
-            lines: tuple[str, ...] = tuple(
-                f"{s} ({len(manifest.tones_in(s))} tones)" for s in manifest.setlists()
-            )
-        except Exception:  # noqa: BLE001 — planning is best-effort/offline
-            lines = ()
-        lines = lines or ("(no setlists to sync)",)
+        manifest = SetlistManifest.load()
+        lines: tuple[str, ...] = tuple(
+            f"{s} ({len(manifest.tones_in(s))} tones)" for s in manifest.setlists()
+        ) or ("(no setlists to sync)",)
         if gc:
             lines = (*lines, "GC: remove pool presets no setlist references")
         return MutationPlan(title="Sync all setlists to the device", lines=lines)
@@ -339,7 +402,14 @@ class RealDevicePort:
     def plan_delete_ir(self, ir_name: str) -> MutationPlan:
         return MutationPlan(
             title="Delete IR from the device",
-            lines=(f"Remove {ir_name!r} from the device (registry + file).",),
+            # Best-effort on the file half deliberately: ``delete_device_ir``'s
+            # SFTP step needs a usable hedit key and commonly can't run, so the
+            # registry entry goes and the .wav stays. Promising both here made
+            # the routine outcome look like a partial failure.
+            lines=(
+                f"Remove {ir_name!r} from the device registry "
+                f"(the backing file too, if it can be reached).",
+            ),
         )
 
     def delete_ir(self, ir_name: str) -> OpResult:
@@ -387,8 +457,11 @@ class RealDevicePort:
             raise
         except OSError as exc:
             # ir_prune's SFTP/socket half can surface an OSError the engine
-            # never wraps; every sibling path treats one as offline.
-            raise DeviceUnreachable(str(exc)) from exc
+            # never wraps; every sibling path treats a TRANSPORT one as offline
+            # and lets a local-disk one (its manifest reads) fail as itself.
+            if _is_transport_oserror(exc):
+                raise DeviceUnreachable(str(exc)) from exc
+            raise
         # The dry-run report is ``{ok, dry_run, device_irs, referenced,
         # protected, orphans, deleted, warnings, errors}`` — the delete
         # candidates are ``orphans`` (``protected`` needs force, which
@@ -416,18 +489,14 @@ class RealDevicePort:
 
     def prune_irs(self) -> OpResult:
         def _run() -> OpResult:
-            from helixgen.device import HelixError, maintenance
+            from helixgen.device import maintenance
 
+            # No local try/except: ``_op`` already applies the one
+            # classification rule (connect-class -> offline, every other abort
+            # soft with the engine's remediation text). A second copy here just
+            # had to be kept in sync, on a destructive verb.
             ip = self._resolve_ip()
-            try:
-                report = maintenance.ir_prune(ip=ip, port=self._port, execute=True)
-            except HelixError as exc:
-                # Connect failure -> offline; every other abort is a healthy
-                # device refusing to delete, so fail soft and keep the engine's
-                # remediation text. See ``_CONNECT_FAILURES``.
-                if _is_connect_failure(exc):
-                    raise DeviceUnreachable(str(exc)) from exc
-                return OpResult(ok=False, message=f"prune aborted: {exc}")
+            report = maintenance.ir_prune(ip=ip, port=self._port, execute=True)
             # Per-IR delete refusals accumulate in ``errors`` and set
             # ``ok=False`` WITHOUT raising (same class as the push_ir fix).
             errors = report.get("errors") or []

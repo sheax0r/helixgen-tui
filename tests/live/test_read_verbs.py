@@ -80,8 +80,21 @@ def _assert_plan(plan: MutationPlan):
 
 
 def test_plan_sync_all(real_port):
+    """Cross-checked against the manifest, not shape-only: this plan feeds a
+    confirm that runs a real sync, and a well-formed "(no setlists to sync)"
+    over a manifest that HAS setlists is exactly the failure the prune plan
+    shipped with. Shape plus a line count can't tell those apart."""
+    from helixgen.device.manifest import SetlistManifest
+
+    expected = list(SetlistManifest.load().setlists())
     plan = real_port.plan_sync_all(gc=False)
     _assert_plan(plan)
+    if expected:
+        assert len(plan.lines) == len(expected)
+        for name in expected:
+            assert any(line.startswith(f"{name} (") for line in plan.lines), (name, plan.lines)
+    else:
+        assert plan.lines == ("(no setlists to sync)",)
     gc_plan = real_port.plan_sync_all(gc=True)
     _assert_plan(gc_plan)
     assert len(gc_plan.lines) == len(plan.lines) + 1  # the GC line

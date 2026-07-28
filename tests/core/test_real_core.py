@@ -8,7 +8,9 @@ offline behavior and their signatures — never driven against hardware.
 
 from __future__ import annotations
 
+import errno
 import inspect
+import os
 from contextlib import contextmanager
 
 import pytest
@@ -561,14 +563,35 @@ def test_connect_failure_markers_still_exist_in_the_installed_engine():
     assert [m for m in _CONNECT_FAILURES if m not in source] == []
 
 
-def test_ir_prune_report_keys_the_port_reads_are_the_engine_s():
+@pytest.mark.parametrize(
+    "verb, keys",
+    [
+        # plan_prune_irs/prune_irs read orphans+warnings and deleted+errors
+        ("ir_prune", ("orphans", "deleted", "warnings", "errors")),
+        # delete_ir folds both halves of the report
+        ("delete_device_ir", ("ok", "file_removed")),
+    ],
+)
+def test_maintenance_report_keys_the_port_reads_are_the_engine_s(verb, keys):
     """The bug this branch exists to fix was reading ``prunable``/``prune``,
-    keys ``ir_prune`` never emitted. Pin the keys the port DOES read to the
-    engine's documented return shape."""
+    keys ``ir_prune`` never emitted — so every folded key gets pinned to the
+    installed engine's SOURCE. Pinning the docstring instead (what this test
+    used to do) is uncorrelated with the defect: it passes while the engine
+    documents keys it no longer emits, and fails when the engine merely rewords
+    its prose."""
     from helixgen.device import maintenance
 
-    doc = inspect.getdoc(maintenance.ir_prune) or ""
-    assert [k for k in ("orphans", "deleted", "warnings", "errors") if k not in doc] == []
+    source = inspect.getsource(getattr(maintenance, verb))
+    assert [k for k in keys if f'"{k}"' not in source and f"'{k}'" not in source] == []
+
+
+def test_upload_missing_irs_report_keys_push_ir_reads_are_the_engine_s():
+    """``push_ir`` folds the engine's per-hash ``ok``/``note``; a rename there
+    silently reinstates the "reported success over a refusal" class."""
+    from helixgen.device import ir_upload
+
+    source = inspect.getsource(ir_upload.upload_missing_irs)
+    assert [k for k in ("ok", "note") if f'"{k}"' not in source and f"'{k}'" not in source] == []
 
 
 def test_prune_irs_mid_operation_drop_flips_the_app_offline(tmp_home, monkeypatch):
@@ -594,19 +617,63 @@ def test_prune_irs_mid_operation_drop_flips_the_app_offline(tmp_home, monkeypatc
 
 
 def test_plan_prune_irs_oserror_flips_the_app_offline(tmp_home, monkeypatch):
-    """Every sibling path maps an OSError to offline; this half caught only
-    HelixError, so a socket error reached DeviceService.query as a generic
-    failure and left the header claiming "connected"."""
+    """Every sibling path maps a TRANSPORT OSError to offline; this half caught
+    only HelixError, so a socket error reached DeviceService.query as a generic
+    failure and left the header claiming "connected".
+
+    Constructed with a real errno, not just "[Errno 65]" in the message:
+    ``OSError("...")`` leaves ``exc.errno`` as None, so a test written that way
+    passes against a classifier that inspects nothing."""
     from helixgen.device import maintenance
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
 
     def boom(**k):
-        raise OSError("[Errno 65] No route to host")
+        raise OSError(errno.EHOSTUNREACH, "No route to host")
 
     monkeypatch.setattr(maintenance, "ir_prune", boom)
     with pytest.raises(DeviceUnreachable):
         build_core().device.plan_prune_irs()
+
+
+@pytest.mark.parametrize("code", [errno.ENOSPC, errno.EACCES, errno.EROFS])
+def test_local_disk_oserror_is_not_reported_as_an_offline_device(tmp_home, monkeypatch, code):
+    """The device layer does LOCAL disk work under the same guards as its
+    sockets — ``backup_setlist`` mkdirs and write_bytes into the backup dir. A
+    blanket ``except OSError -> DeviceUnreachable`` reported a full disk / an
+    unwritable backup dir as "device offline": the app blanked, the real cause
+    (ENOSPC) was discarded, and the next 15s poll flipped the header back to
+    connected."""
+    from helixgen.device import backup as _backup
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(monkeypatch)
+
+    def boom(client, *a, **k):
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(_backup, "backup_setlist", boom)
+    result = build_core().device.backup()
+    assert result.ok is False
+    assert os.strerror(code) in result.message
+
+
+def test_transport_oserror_from_a_mutation_still_flips_the_app_offline(tmp_home, monkeypatch):
+    """The other half of the errno split: the classifier must not be so narrow
+    that a device genuinely off the LAN fails soft in the footer. EHOSTUNREACH
+    arrives as a PLAIN OSError — it is not a ``ConnectionError`` subclass, so
+    classifying by class instead of errno would miss it."""
+    from helixgen.device import backup as _backup
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(monkeypatch)
+
+    def boom(client, *a, **k):
+        raise OSError(errno.EHOSTUNREACH, "No route to host")
+
+    monkeypatch.setattr(_backup, "backup_setlist", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.backup()
 
 
 def _connectable_client(monkeypatch):
@@ -664,3 +731,78 @@ def test_delete_ir_connect_failure_still_flips_the_app_offline(tmp_home, monkeyp
     monkeypatch.setattr(maintenance, "delete_device_ir", boom)
     with pytest.raises(DeviceUnreachable):
         build_core().device.delete_ir("Old Cab")
+
+
+# --- Fix 6: strict listings, and reads that abort without going offline ------
+
+
+@pytest.mark.parametrize(
+    "verb, listing",
+    [("_pool_cid_for", "list_presets"), ("list_device_irs", "list_irs")],
+)
+def test_port_listings_are_strict(verb, listing):
+    """Both listings the port reads default to ``strict=False``, which reads a
+    timeout or a truncated reply as an empty/partial list. ``_pool_cid_for``
+    turns a missing row into the definitive claim "'X' is not on the device",
+    and ``list_device_irs`` renders the pane the user pushes to and deletes
+    from — neither may silently under-report. Pinned as source rather than
+    behavior because the default is the engine's, so a port that simply drops
+    the keyword reads as working."""
+    source = inspect.getsource(getattr(RealDevicePort, verb))
+    assert f"{listing}(strict=True)" in source
+
+
+def test_list_device_irs_strict_failure_reports_instead_of_going_offline(tmp_home, monkeypatch):
+    """A strict listing raising on a truncated reply is an abort on a REACHABLE
+    device. ``_session`` used to map every HelixError to DeviceUnreachable, so
+    refreshing the IRs tab over one dropped frame blanked the whole app; the
+    error must reach ``DeviceService.query``'s error branch instead, which
+    reports it and leaves connectivity alone."""
+    from helixgen.device import HelixError
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(monkeypatch)
+
+    def boom(self, ip):
+        raise HelixError("malformed device reply: truncated chunked payload")
+
+    monkeypatch.setattr(RealDevicePort, "_session", contextmanager(boom))
+    with pytest.raises(HelixError):
+        build_core().device.list_device_irs()
+
+
+def test_probe_survives_a_non_connect_failure_instead_of_killing_its_thread(monkeypatch):
+    """``_session`` no longer converts every HelixError, so ``probe`` can now
+    raise one. ``DeviceService._probe_once`` runs on a daemon thread and caught
+    only DeviceUnreachable — an escaping error killed the poller silently and
+    froze the header on its last state forever."""
+    from helixgen.device import HelixError
+
+    from helixgen_tui.core.device import DeviceService
+
+    seen = []
+
+    class _Port:
+        def probe(self):
+            raise HelixError("malformed device reply")
+
+    service = DeviceService(_Port(), on_state=seen.append, spawn=lambda fn: fn(), timeout=1.0)
+    service.start()
+    assert seen and seen[-1].status == "offline"
+
+
+def test_plan_sync_all_raises_rather_than_planning_over_a_broken_manifest(tmp_home, monkeypatch):
+    """A destructive-confirm preview must RAISE on anything the confirm can't
+    survive (the ``plan_prune_irs`` rule). Swallowing the failure rendered the
+    literal "(no setlists to sync)" — indistinguishable from a genuinely empty
+    manifest — behind a confirm that then ran a real sync."""
+    from helixgen.device import manifest as manifest_mod
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(*a, **k):
+        raise KeyError("tones")
+
+    monkeypatch.setattr(manifest_mod.SetlistManifest, "load", staticmethod(boom))
+    with pytest.raises(KeyError):
+        build_core().device.plan_sync_all(gc=True)

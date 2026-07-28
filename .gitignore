@@ -21,3 +21,4 @@ irs/
 # ralphex runtime (not committed)
 .ralphex/progress/
 .ralphex/worktrees/
+.coverage

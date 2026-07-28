@@ -421,3 +421,28 @@ Note the UI is never actually blocked — `run`/`query` spawn off-thread — so 
 timeout only controls when a result is reported. Work when picked up: per-call
 `timeout` override on `run`/`query`, slow call sites passing it, plus one test
 driving a verb through `DeviceService` end to end.
+
+## 27. Live-suite safety helpers have no offline test (review finding, 2026-07-27)
+
+`tests/live/conftest.py`'s guard helpers — `_normalize_rows`,
+`_capture_device_state`, `_sweep_stale_hgtest_artifacts` — are the whole
+safety net for a suite that writes to real hardware, yet nothing exercises
+them. They already take an injectable `cli`, so an offline test with a stub
+runner is cheap; their sibling `_snapshot_real_home` got exactly that
+treatment (`tests/test_boundaries.py`) and it caught a real inertness bug.
+
+The failure mode is the bad one: a broken guard does not fail loudly, it goes
+**inert** — `_capture_device_state` returning a shape that compares equal
+regardless of what changed reports a clean device over a leaked artifact, and
+the suite's whole "no device state changed" claim becomes vacuous. Worth a
+handful of stub-`cli` tests: a row missing its id key routes to `failed`
+rather than raising, a non-`HGTEST` row is never swept, a delete that exits
+non-zero is fatal, and a changed row genuinely produces a non-empty diff.
+
+Related: `test_list_device_irs_matches_engine_cli` passes vacuously on a
+device with no IRs (both sides empty), and `tests/live/conftest.py`'s
+`_REAL_HELIXGEN`/`_REAL_LOCKS` are a second name for `tests/conftest.py`'s
+`REAL_HELIXGEN_HOME`/`REAL_LOCKS_ROOT` — same engine calls, but the two files
+must agree (the root guard excludes exactly the root the live suite writes to)
+and nothing enforces it. A shared `tests/support.py` would retire both those
+constants and `test_boundaries.py`'s by-path `_load_conftest` importer.

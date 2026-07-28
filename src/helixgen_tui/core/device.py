@@ -138,6 +138,14 @@ class DeviceService:
         except DeviceUnreachable:
             self._set_state(_OFFLINE)
             return
+        except Exception:  # noqa: BLE001 — a probe that raises IS "not usable"
+            # The port only raises DeviceUnreachable for a connect-class
+            # failure; anything else (a protocol fault on a reachable device)
+            # would otherwise kill this daemon thread silently and freeze the
+            # header on its last state forever. Offline is the honest report
+            # for a probe that couldn't complete, and the next poll retries.
+            self._set_state(_OFFLINE)
+            return
         self._set_state(state)
 
     def _set_state(self, state: DeviceStateVM) -> None:

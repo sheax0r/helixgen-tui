@@ -90,6 +90,13 @@ user never sees or types.
 > forced delete). And prune (`P`) refuses in the status bar, without opening a
 > confirm, whenever the engine can't verify some local tones' IR references —
 > a confirm it could only fail is worse than no confirm.
+>
+> Also known: long device operations — *sync all* and *prune* especially — can
+> report `timed out` in the status bar after ~5s while the operation is still
+> running on the device and goes on to complete. The failure is in the
+> reporting, not the write; nothing is rolled back. Re-check the tab (`r` on
+> Device) before retrying rather than firing the same write again. Tracked in
+> `docs/BACKLOG.md` #26.
 
 The long-term goal is full parity with the Helix Stadium desktop app
 (tracked in helixgen-core's `docs/stadium-app-parity.md`); this v1 ships the
@@ -130,6 +137,16 @@ helixgen state is
 redirected to a scratch dir for the run and every artifact is `HGTEST`-prefixed;
 the safety model and the deliberately excluded verbs are documented in
 `tests/live/conftest.py`.
+
+Two recoveries worth knowing before you need them. A run killed outright
+(SIGKILL, not Ctrl-C) leaves the machine's **real** advisory `all` device lease
+held for up to its 1800s TTL, which blocks every other helixgen process on the
+machine — clear it with `helixgen device unlock --force`. And a
+`~/.helixgen changed during the test session` failure is not necessarily a
+suite leak: another helixgen process (an editor, a parallel agent, a shell)
+touching the real home fails the session the same way. Tell them apart by
+re-running under an isolated home — `HELIXGEN_HOME=$(mktemp -d) uv run pytest`
+— which still fails only if the suite really did leak.
 
 CI (GitHub Actions) runs ruff + pytest on every PR and push to `main`;
 `publish.yml` releases to PyPI via OIDC trusted publishing on `v*` tags.

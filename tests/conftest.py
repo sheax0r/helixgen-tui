@@ -72,13 +72,18 @@ def _snapshot_real_home(
       refreshes ``.git/index`` and used to fail the session with a diff of
       nothing but index mtimes. Nothing the suite could leak lives inside
       ``.git/`` — a leaked write lands in the WORKTREE, which is still covered.
+
+    The ``.git`` test is against the path RELATIVE to the root: matched against
+    the absolute path, a home that happens to sit under any ``.git`` component
+    excludes every file, both snapshots come back empty, ``before == after``
+    holds trivially and the guard is silently inert.
     """
     if not root.exists():
         return None
     return {
         str(p): p.stat().st_mtime
         for p in root.rglob("*")
-        if locks not in p.parents and p != locks and ".git" not in p.parts
+        if locks not in p.parents and p != locks and ".git" not in p.relative_to(root).parts
     }
 
 

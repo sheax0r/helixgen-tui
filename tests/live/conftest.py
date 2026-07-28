@@ -373,38 +373,32 @@ def _sweep_stale_hgtest_artifacts(cli) -> list[str]:
     baseline, the teardown diff would then match, and the suite would report a
     clean device while its own junk sat on it."""
     swept, failed = [], []
-
-    def _sweep(label: str, *args):
-        code, out, err = cli(*args)
-        if code == 0:
-            swept.append(label)
-        else:
-            failed.append(f"{label}: {(err or out).strip()}")
-
-    code, out, _ = cli("device", "list", "--json")
-    if code == 0:
+    for kind, list_args, id_key, delete_args in (
+        ("preset", ("device", "list", "--json"), "cid_", ("device", "delete")),
+        ("setlist", ("device", "setlists", "--json"), "name", ("device", "setlist", "delete")),
+        ("IR", ("device", "list-irs", "--json"), "hash", ("device", "delete-ir")),
+    ):
+        code, out, _ = cli(*list_args)
+        if code != 0:
+            continue
         for m in json.loads(out):
-            if (m.get("name") or "").startswith(HGTEST):
-                _sweep(
-                    f"preset {m['name']!r} (cid {m['cid_']})",
-                    "device", "delete", m["cid_"], "--yes",
-                )
-    code, out, _ = cli("device", "setlists", "--json")
-    if code == 0:
-        for m in json.loads(out):
-            if (m.get("name") or "").startswith(HGTEST):
-                _sweep(
-                    f"setlist {m['name']!r}",
-                    "device", "setlist", "delete", m["name"], "--yes",
-                )
-    code, out, _ = cli("device", "list-irs", "--json")
-    if code == 0:
-        for m in json.loads(out):
-            if (m.get("name") or "").startswith(HGTEST):
-                _sweep(
-                    f"IR {m['name']!r} ({m['hash']})",
-                    "device", "delete-ir", m["hash"], "--yes",
-                )
+            name = m.get("name") or ""
+            if not name.startswith(HGTEST):
+                continue
+            # ``.get``, not ``[...]``: a row missing its id key would raise a
+            # KeyError out of a session fixture and replace the state-leak
+            # signal with an unrelated traceback. An unidentifiable artifact
+            # can't be swept, so it belongs in ``failed`` like any other.
+            ident = m.get(id_key)
+            label = f"{kind} {name!r} ({id_key}={ident!r})"
+            if ident is None:
+                failed.append(f"{label}: row has no {id_key!r} to delete by")
+                continue
+            code, out, err = cli(*delete_args, ident, "--yes")
+            if code == 0:
+                swept.append(label)
+            else:
+                failed.append(f"{label}: {(err or out).strip()}")
     assert not failed, (
         "could not sweep stale HGTEST artifacts from a previous run — they "
         "would poison the state baseline. Clean them by hand and re-run:\n  "
