@@ -43,6 +43,16 @@ before any code.
   over reports carrying the engine's refusals — all fixed, with the plan test
   now cross-checked against `device ir-prune --json`. Findings doc:
   `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
+  **Closed out 2026-07-28** after a re-plan (the original plan left design
+  decisions to the implementer, so its review ran 12 fix rounds without
+  converging — lesson filed as workspace #100). Re-run end to end in final
+  form: **20 passed / 1 skipped in 556.76s**, the skip being the prune safety
+  gate refusing to prune five non-`HGTEST` user IRs it named; no TUI or engine
+  defects surfaced; device left clean. Also confirmed **#26** on hardware.
+  Close-out design + findings:
+  `docs/superpowers/specs/2026-07-28-live-smoke-suite-closeout-design.md`,
+  `docs/superpowers/specs/2026-07-28-live-smoke-suite-findings.md`.
+  Deferrals: #25, #26 (fix), #27.
 - **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
   push** — `RealDevicePort` returns `ok=False` for these; the engine change
   lands in helixgen-core first (ref #3's stable-API ask).
