@@ -206,7 +206,9 @@ def test_sync_lifecycle_via_port(real_port, helix, cli, scratch, amp_blocks):
 
         # sync_all is a managed-set mirror: only synced manifest setlists
         # (here: the HGTEST one) are touched — confirm the untracked device
-        # setlists are byte-identical across the run
+        # setlist CONTAINERS are unchanged (their entries aren't listed by
+        # `device setlists --json`; the session state guard's pool capture is
+        # what would catch a reference written into one)
         res = real_port.sync_all(gc=False)
         _assert_op(
             res,
@@ -354,7 +356,14 @@ def test_ir_push_rename_delete_roundtrip(real_port, helix, cli, scratch):
         assert _device_ir_rows(helix)[irhash]["name"] == renamed
 
         res = real_port.delete_ir(irhash)
-        _assert_op(res, True, f"deleted IR {irhash!r}")
+        # NOT _assert_op: the message is deliberately conditional. The engine's
+        # advisory SFTP half (``file_removed``) fails on any machine without a
+        # usable hedit key, and the port appends "(registry entry removed;
+        # backing file left on the device)" when it does — a partial success,
+        # not a regression. The registry check below is the real assertion.
+        assert isinstance(res, OpResult)
+        assert res.ok is True, res.message
+        assert res.message.startswith(f"deleted IR {irhash!r}"), res.message
         assert irhash not in _device_ir_rows(helix)
     finally:
         _teardown_device_ir(helix, irhash, registered)

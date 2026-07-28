@@ -332,8 +332,6 @@ class RealDevicePort:
 
         return self._op("delete_ir", _run)
 
-    _PRUNE_TITLE = "Prune unreferenced device IRs"
-
     def plan_prune_irs(self) -> MutationPlan:
         """The preview behind a destructive ConfirmModal — so a planning
         failure RAISES rather than becoming plan text: the caller runs this
@@ -351,13 +349,23 @@ class RealDevicePort:
         # ("prunable"/"prune") have never existed, so the confirm modal
         # for a destructive verb always claimed there was nothing to
         # prune while the confirm went on to delete for real.
+        warnings = report.get("warnings") or []
+        if warnings:
+            # A warning means the confirm CANNOT succeed: ir_prune(execute=True)
+            # raises "refusing to execute: ..." over unverifiable local IR
+            # references unless ignore_warnings is passed, and this port never
+            # passes it (that would be failing open on a destructive verb).
+            # Rendering them as plan lines opened a confirm doomed to refuse.
+            raise RuntimeError(
+                "cannot plan a prune: some local tones' IR references could not "
+                "be verified, so the prune would refuse to execute — "
+                + "; ".join(str(w) for w in warnings)
+            )
         lines = tuple(
             f"Delete {str(o.get('name') or o.get('hash'))!r} from the device."
             for o in (report.get("orphans") or [])
         ) or ("(no unreferenced device IRs to prune)",)
-        for warning in report.get("warnings") or []:
-            lines += (f"WARNING: {warning}",)
-        return MutationPlan(title=self._PRUNE_TITLE, lines=lines)
+        return MutationPlan(title="Prune unreferenced device IRs", lines=lines)
 
     def prune_irs(self) -> OpResult:
         def _run() -> OpResult:
@@ -372,6 +380,13 @@ class RealDevicePort:
                 # cross-check disagreeing, nothing deleted. Letting ``_op`` map
                 # every HelixError to DeviceUnreachable would report that as
                 # "device offline" and flip the whole app offline.
+                #
+                # Only that abort, though: ir_prune's own connect raises
+                # HelixError("no Helix Stadium answered at ...") for a device
+                # that dropped off the LAN, and swallowing THAT would leave the
+                # app claiming "connected" over an unreachable device.
+                if "listings changed" not in str(exc):
+                    raise
                 return OpResult(ok=False, message=f"prune aborted: {exc}")
             # Per-IR delete refusals accumulate in ``errors`` and set
             # ``ok=False`` WITHOUT raising (same class as the push_ir fix).

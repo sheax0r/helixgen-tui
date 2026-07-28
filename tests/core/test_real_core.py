@@ -135,6 +135,30 @@ def test_push_ir_resolves_registered_ir_by_stem(tmp_home, tmp_path, monkeypatch)
     assert captured["hashes"] == [irhash]
 
 
+def test_push_ir_by_irhash_reports_the_registered_stem(tmp_home, tmp_path, monkeypatch):
+    """The IRs screen pushes ``ir.irhash or ir.name`` — i.e. a raw HASH
+    whenever one is known, so duplicate display names stay unambiguous. That
+    branch must resolve to itself AND still label the footer with the
+    registered file's stem, not the 32-char hash."""
+    import helixgen.device.ir_upload as ir_upload
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    irhash = _register_ir(tmp_path)
+
+    captured: dict = {}
+
+    def fake_upload(ip, hashes):
+        captured["hashes"] = list(hashes)
+        return [{"ok": True, "outcome": "imported"}]
+
+    monkeypatch.setattr(ir_upload, "upload_missing_irs", fake_upload)
+
+    result = build_core().device.push_ir(irhash)  # the hash, as the screen sends
+    assert result.ok is True
+    assert captured["hashes"] == [irhash]
+    assert result.message == "pushed IR 'V30 Cab'", result.message
+
+
 def test_push_ir_engine_soft_failure_flips_ok_false(tmp_home, tmp_path, monkeypatch):
     """The engine's upload result carries per-hash ``ok`` (True only for
     outcomes "already"/"imported"). A soft failure like "upload_failed" or
@@ -320,16 +344,31 @@ def test_plan_prune_irs_lists_the_orphans_the_engine_reports(tmp_home, monkeypat
     assert "no unreferenced" not in " ".join(plan.lines)
 
 
-def test_plan_prune_irs_surfaces_warnings_and_the_empty_case(tmp_home, monkeypatch):
+def test_plan_prune_irs_renders_the_empty_case(tmp_home, monkeypatch):
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    monkeypatch.setattr(maintenance, "ir_prune", lambda **k: _prune_report())
+    assert "(no unreferenced device IRs to prune)" in build_core().device.plan_prune_irs().lines
+
+
+def test_plan_prune_irs_refuses_to_plan_over_verification_warnings(tmp_home, monkeypatch):
+    """``ir_prune(execute=True)`` RAISES over these warnings unless
+    ``ignore_warnings`` is passed, and this port never passes it — so a plan
+    that renders them as text opens a ConfirmModal whose confirm can only ever
+    fail. Refuse to plan instead."""
     from helixgen.device import maintenance
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
     monkeypatch.setattr(
-        maintenance, "ir_prune", lambda **k: _prune_report(warnings=["tone 'x' unreadable"])
+        maintenance,
+        "ir_prune",
+        lambda **k: _prune_report(
+            orphans=[{"name": "Old Cab", "hash": "abc"}], warnings=["tone 'x' unreadable"]
+        ),
     )
-    lines = build_core().device.plan_prune_irs().lines
-    assert "(no unreferenced device IRs to prune)" in lines
-    assert any("tone 'x' unreadable" in line for line in lines)
+    with pytest.raises(RuntimeError, match="tone 'x' unreadable"):
+        build_core().device.plan_prune_irs()
 
 
 def test_plan_prune_irs_raises_a_planning_failure(tmp_home, monkeypatch):
@@ -392,6 +431,22 @@ def test_prune_irs_abort_is_not_reported_as_an_offline_device(tmp_home, monkeypa
     result = build_core().device.prune_irs()
     assert result.ok is False
     assert "device listings changed" in result.message
+
+
+def test_prune_irs_connect_failure_still_flips_the_app_offline(tmp_home, monkeypatch):
+    """The abort catch above must not swallow ir_prune's OWN connect failure —
+    a device that dropped off the LAN raises HelixError too, and reporting that
+    as a soft "prune aborted" leaves the app claiming it is still connected."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise HelixError("no Helix Stadium answered at 10.255.255.1:2002")
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.prune_irs()
 
 
 def test_delete_ir_reports_the_engine_refusal(tmp_home, monkeypatch):

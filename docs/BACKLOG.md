@@ -387,3 +387,28 @@ the `tests/live/` branch:
   `tests/conftest.py`'s session guard that non-live tests see no device IP.
 - `DEVICE_IP` is resolved at import on every default run and printed into the
   `-ra` skip reason, so the LAN address shows up in local/CI test output.
+
+## 26. `DeviceService`'s 5s timeout is shorter than the device verbs it guards (review finding, 2026-07-27)
+
+`DeviceService.__init__` defaults `timeout=5.0` (`core/device.py`) and
+`app.py`'s `on_mount` never overrides it, so every `run()`/`query()` joins its
+worker thread for 5 seconds and then reports `"<label>: timed out"`. The live
+suite measured what these verbs actually cost on hardware — 21 tests in 371s,
+with `device ir-prune` and `device sync` budgeted at 300s and 600s — and
+`ir_prune` alone does two full strict scans (pool listing, pool/reference
+cross-check, IR listing, per-preset IR-reference scan) per call. So in the app
+the Prune and Sync flows almost certainly report a timeout every time, **while
+the daemon thread keeps running and keeps mutating the device**: a false
+failure over a write that lands.
+
+The live suite structurally cannot see this — every test drives `real_port`
+directly, never through `DeviceService`.
+
+Not fixed in the review pass because the fix is a UX decision, not a constant:
+a long backstop (600s) means a genuinely wedged op gives no footer feedback for
+ten minutes, so it wants an in-flight indicator and/or per-op timeouts (long for
+the known-slow mutating verbs, short for reads) rather than a bigger number.
+Note the UI is never actually blocked — `run`/`query` spawn off-thread — so the
+timeout only controls when a result is reported. Work when picked up: per-call
+`timeout` override on `run`/`query`, slow call sites passing it, plus one test
+driving a verb through `DeviceService` end to end.

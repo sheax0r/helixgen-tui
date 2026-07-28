@@ -207,6 +207,30 @@ async def test_capital_p_renders_plan_lines_verbatim():
         assert ("prune_irs", ()) in port.calls
 
 
+async def test_capital_p_planning_failure_refuses_without_modal():
+    """A prune plan that RAISES must reach the footer, not the modal. The whole
+    reason ``plan_prune_irs`` raises (on an engine abort, or on warnings that
+    would make the confirm refuse) is that a ConfirmModal over an unknown
+    delete list is a destructive verb with no preview — and `y` runs it."""
+
+    class _RaisingPruneDevicePort(FakeDevicePort):
+        def plan_prune_irs(self) -> MutationPlan:
+            raise RuntimeError("cannot plan a prune: tone 'x' unreadable")
+
+    port = _RaisingPruneDevicePort(state=_CONNECTED, device_irs=list(_DEVICE_IRS))
+    core = FakeCore(local_irs=list(_LOCAL_IRS), device=port)
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("P")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal)
+        assert ("prune_irs", ()) not in port.calls
+        footer = app.screen.query_one(StatusFooter)
+        assert "tone 'x' unreadable" in footer.last_action
+
+
 async def test_capital_p_offline_refuses_without_modal():
     port = FakeDevicePort()  # default offline
     core = FakeCore(local_irs=list(_LOCAL_IRS), device=port)

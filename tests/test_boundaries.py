@@ -5,6 +5,7 @@ it has no other dedicated test module: mutations append to `.calls`, and
 `fail_next` raises `DeviceUnreachable` exactly once, then clears itself).
 """
 
+import importlib.util
 import pathlib
 import re
 
@@ -80,3 +81,29 @@ def test_fake_core_setlist_port_records_mutations():
     result = core.setlists.add_tone("Gig 1", "tone-1")
     assert result.ok is True
     assert core.setlists.calls == [("add_tone", ("Gig 1", "tone-1"))]
+
+
+def test_real_home_guard_snapshot_excludes_only_the_locks_subtree(tmp_path):
+    """The session guard's whole value is the diff being non-empty when real
+    state changes: an over-broad exclusion would return {} for both snapshots
+    and pass unconditionally, silently dropping the backstop."""
+    # by path, not `from conftest import ...`: tests/live/conftest.py has no
+    # package dir, so it also imports under the bare name "conftest" and wins.
+    spec = importlib.util.spec_from_file_location(
+        "_root_conftest", pathlib.Path(__file__).parent / "conftest.py"
+    )
+    root_conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(root_conftest)
+    _snapshot_real_home = root_conftest._snapshot_real_home
+
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "index.json").write_text("{}")
+    (tmp_path / "locks").mkdir()
+    (tmp_path / "locks" / "all.lock").write_text("x")
+
+    snapshot = _snapshot_real_home(tmp_path)
+    assert set(snapshot) == {
+        str(tmp_path / "library"),
+        str(tmp_path / "library" / "index.json"),
+    }
+    assert _snapshot_real_home(tmp_path / "missing") is None

@@ -184,3 +184,67 @@ defaults to `--setlist user`, which *is* the pool (cid -2). The `gc=True`
 exclusion still stands, on the honest reason: the guard would only report the
 damage after the presets were already deleted, and no TUI surface passes
 `gc=True`.
+
+### Found in the third review pass (2026-07-27)
+
+- **The `prune_irs` abort catch swallowed a genuinely offline device.** The
+  second pass added `except HelixError` around `ir_prune(execute=True)` to stop
+  a healthy-device abort from flipping the app offline. But `ir_prune` opens its
+  own `HelixClient`, and `HelixClient.connect(verify=True)` raises
+  `HelixError("no Helix Stadium answered at …")` for a device that dropped off
+  the LAN — the *likelier* of the two paths, given the Stadium's flaky network
+  stack. That now reported `prune aborted: …` with the service still showing
+  "connected". The catch is narrowed to the engine's re-scan abort (`listings
+  changed`) and re-raises everything else, with a unit test for each half.
+- **The prune plan could only lead to a confirm that refuses.**
+  `plan_prune_irs` rendered the engine's `warnings` as informational lines
+  beside the delete list, but `ir_prune(execute=True)` raises `ValueError`
+  ("refusing to execute: …") whenever those warnings exist unless
+  `ignore_warnings` is passed — and this port never passes it (failing open on
+  a destructive verb). So `y` on that modal always failed. The plan now raises
+  over warnings, which is the same rule the second pass established for a
+  planning abort: a plan whose confirm cannot succeed must not open the modal.
+- **The live IR test pinned a message the port had just made conditional.** The
+  final commit appended "(registry entry removed; backing file left on the
+  device)" whenever `file_removed` is falsy — which the engine returns for *any*
+  SFTP failure, including a missing hedit key — while
+  `test_ir_push_rename_delete_roundtrip` asserted the no-suffix string exactly.
+  That path was never hardware-run. The assertion is now a prefix check plus the
+  registry-gone check that was always the real one.
+- **The repo-wide real-home guard ignored `$HELIXGEN_HOME`.** The second pass
+  fixed the live conftest's lock root to honour it; `tests/conftest.py` still
+  hardcoded `~/.helixgen`, so on a machine with a custom home the guard cited by
+  the live conftest as its backstop snapshotted an unrelated directory and
+  `before == after` held trivially. It now resolves the same way, once at import
+  (before any fixture redirects the env), and the `locks/` exclusion predicate
+  has its own unit test — an over-broad version would return `{}` for both
+  snapshots and pass unconditionally.
+- **"Provably no socket" was not provable.** `test_probe_unconfigured_raises_
+  without_socket` bombed `socket.socket`/`socket.create_connection`, but
+  `HelixClient` is pyzmq — its sockets are created in C and never touch the
+  stdlib module — and a leaked connect would surface as `DeviceUnreachable`
+  anyway, so the test passed either way. It now bombs `RealDevicePort._session`,
+  which is transport-independent.
+- **`_persisted_device_ip` was a 25-line copy of `discovery.resolve_ip()`** —
+  same env-then-newest-record chain, same `(ip_updated_at, serial)` ordering,
+  free to drift from the engine's, which is the skew this suite exists to
+  detect. Replaced with the engine call (it opens no socket, and still runs at
+  import, before the scratch redirect). `_live_env`'s version gate also parsed
+  with `int(part)`, so a pre-release like `0.31rc1` raised `ValueError` out of
+  the gate instead of reaching its own message.
+- **The state guard's documented blind spot was understated.** The docstring
+  named only the active edit buffer. Setlist *entries* are also uncaptured —
+  `device setlists --json` lists containers, not the per-position references
+  inside them — so `test_sync_lifecycle_via_port`'s "untracked setlists
+  untouched" assertion covers containers only. Documented honestly on both
+  sides rather than adding a per-setlist walk: sync always writes the pool half
+  too, and the pool *is* captured, so a leak is narrower than invisible.
+
+Deferred, not fixed: **`DeviceService`'s 5s timeout is shorter than the verbs it
+guards** (backlog #26). Every `run()`/`query()` joins its worker for 5s and then
+reports `"<label>: timed out"` while the daemon thread keeps mutating the
+device — and this suite measured `ir-prune`/`sync` in the hundreds of seconds.
+The live suite structurally cannot see it: every test drives `real_port`
+directly, never through `DeviceService`. Not a constant to bump in a review
+pass — a long backstop means ten minutes of no feedback on a wedged op, so it
+wants per-op timeouts and an in-flight indicator.

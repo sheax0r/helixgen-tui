@@ -15,6 +15,7 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 - **Engines live in core.** TUI = view/controller over helixgen's library + device APIs (`helixgen.device`, setlist manifest, sync). No protocol logic, no `.hsp` parsing, no hashing in this repo.
 - **Device writes are real.** Same write-gating mentality as core's CLI: reads free; anything mutating device (sync, install, delete, live ops) must be explicit, visible user action in UI — never side effect of navigation. Stadium network stack flaky: surface retry affordances, don't hang UI on dropped frame.
 - **Searching is never a write.** `enter` in a filter input acts on the highlighted row — which filtering has already parked on the best match — and stops there — activate/sync/push/delete/rename keep their own keys. Only a picker whose whole purpose is committing a choice (`AddToneModal`) acts on `enter`, and then only against local state. New filterable surfaces inherit this: `FilterableTableMixin.filter_on_enter` defaults to `move_cursor_to`, so overriding it is the deliberate act.
+- **Real-port verbs fold the engine's report; they never hardcode `ok=True`.** helixgen's device layer signals per-item failure *inside* the returned dict (`ok`, `errors`, `warnings`, `note`, `file_removed`) and raises only for transport faults — four verbs in `core/real.py` shipped reporting success over engine refusals for exactly this reason (2026-07-27, spec `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`). New verbs assert the report shape against the installed engine in an offline unit test. A `plan_*` feeding a destructive `ConfirmModal` **raises** on any condition the confirm couldn't survive — `DeviceService.query` reports it and the modal never opens; returning the reason as plan text offers a confirmable delete that can only fail.
 - **List surfaces resolve selection through `FilterableTableMixin.selected()`** (`src/helixgen_tui/screens/filterable.py`) — never by parsing a row key back into a backing index. The mixin's `_visible` is the only valid cursor→item mapping; once rows are filtered or re-ranked, table position and backing position diverge. Row keys stay positional where display names duplicate (the IR panes) purely because `DataTable` rejects repeats — they carry no meaning, which is also why `rebuild_filtered` restores the cursor by *item*, not by key.
 
 ## Open decisions (settle in the design spec, not in code)
@@ -33,12 +34,12 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 - **Live device suite (`tests/live/`) is opt-in.** Default `pytest` run and CI
   hard-skip it at collection — green, offline, no device writes possible. To run
   against real hardware: `HELIXGEN_TUI_LIVE=1 uv run pytest tests/live -q`
-  (also needs helixgen >=0.31 — below that the suite fails fast rather than
-  presenting core #38's IR-listing bug as a TUI regression — an ingested block
-  library, the Stadium's ZMQ port 2002 TCP-reachable, and a resolvable device
-  IP: `HELIXGEN_HELIX_IP`, else a `helixgen device discover` record, since the
-  scratch home has none. Missing library/IP/device = skip, not fail; `-m live`
-  selects the suite). Safety posture:
+  (`-m live` selects the suite). Also needs: helixgen >=0.31, an ingested block
+  library, the Stadium's ZMQ port 2002 TCP-reachable, and a resolvable device IP
+  (`HELIXGEN_HELIX_IP`, else a `helixgen device discover` record — the scratch
+  home has none). Missing library/IP/device = skip; engine below the pin = fail
+  fast, rather than presenting core #38's IR-listing bug as a TUI regression.
+  Safety posture:
   all local helixgen state redirected to scratch, upfront device backup,
   session-failing device state guard, `HGTEST`-prefixed artifacts only, session
   `all` advisory lease held for the run. Normative details + exclusions

@@ -43,10 +43,10 @@ Safety model (encoded as fixtures)
   plain ``os.environ`` mutation (restored at teardown) so both the in-process
   port under test and every CLI subprocess the safety net spawns see the same
   scratch state.
-* The device IP is resolved BEFORE the home redirect (``$HELIXGEN_HELIX_IP``,
-  else the newest ``~/.helixgen/devices/*.json`` record, stdlib-only — the
-  same ordering as ``discovery.resolve_ip()``) and pinned into
-  ``HELIXGEN_HELIX_IP``, because the scratch home has no device records.
+* The device IP is resolved BEFORE the home redirect (the engine's own
+  ``discovery.resolve_ip()``: ``$HELIXGEN_HELIX_IP``, else the newest
+  ``devices/*.json`` record) and pinned into ``HELIXGEN_HELIX_IP``, because
+  the scratch home has no device records.
 * An upfront ``device backup`` (to scratch) runs before the first device test
   (``device_backup``).
 * Device state (user presets / setlists / IRs, via the engine CLI's
@@ -55,15 +55,23 @@ Safety model (encoded as fixtures)
   changed (``device_state_guard``). Stale ``HGTEST`` leftovers from a crashed
   previous run are swept before the capture. ``device list --json`` defaults
   to ``--setlist user``, which IS the preset POOL (cid space -2, where every
-  user preset lives), so pool leaks ARE covered by the diff. Known blind spot,
-  stated honestly: the ACTIVE edit
-  buffer is not part of the diff (``make_active`` tests capture and restore
-  the active preset themselves, but unsaved edit-buffer changes present
-  before the run are discarded by design — saved presets are covered by the
-  upfront backup).
+  user preset lives), so pool leaks ARE covered by the diff. Two blind spots,
+  stated honestly:
+  (a) the ACTIVE edit buffer is not part of the diff (``make_active`` tests
+  capture and restore the active preset themselves, but unsaved edit-buffer
+  changes present before the run are discarded by design — saved presets are
+  covered by the upfront backup);
+  (b) setlist ENTRIES are not: ``device setlists --json`` lists the
+  containers (``cid_``/``name``/``posi``), not the per-position references
+  inside them, so a reference written into an untracked setlist without a
+  matching pool change would not show up in the diff. Sync always writes the
+  pool half too — which IS captured — so a leak is not invisible, just
+  narrower than the container list suggests.
 * The repo-wide session guard in ``tests/conftest.py`` verifies the user's
-  real ``~/.helixgen`` files (everything except the ``locks/`` subtree — see
-  below) are untouched at teardown, by full mtime snapshot.
+  real helixgen home (``$HELIXGEN_HOME``, else ``~/.helixgen``, resolved the
+  same way and at the same time as ``_REAL_HELIXGEN`` below — everything
+  except the ``locks/`` subtree) is untouched at teardown, by full mtime
+  snapshot.
 * Every artifact the suite creates carries the ``HGTEST`` prefix; teardown
   helpers refuse to touch anything without it.
 
@@ -102,6 +110,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -128,34 +137,25 @@ _LIVE_DIR = Path(__file__).resolve().parent
 _REAL_HELIXGEN = Path(os.environ.get("HELIXGEN_HOME") or Path.home() / ".helixgen")
 
 
-def _persisted_device_ip() -> str | None:
-    """The newest discovered ip across ~/.helixgen/devices/*.json, stdlib-only
-    (the suite must resolve it BEFORE redirecting $HELIXGEN_HOME to scratch).
-    Ordering matches ``discovery.resolve_ip()``: ``ip_updated_at`` desc, then
-    ``serial`` desc (filename stem when the field is absent)."""
-    best: tuple | None = None
+def _resolve_device_ip() -> str | None:
+    """The engine's own resolution chain ($HELIXGEN_HELIX_IP, else the newest
+    persisted ``devices/*.json`` record), run at IMPORT — i.e. before
+    ``_live_env`` redirects $HELIXGEN_HOME to scratch, which has no records.
+    It opens no socket. A local copy of the chain would be free to drift from
+    the engine's, which is the very skew this suite exists to detect.
+
+    Anything unexpected is swallowed: this runs at COLLECTION time on every
+    default (offline) run, so a raise here would break plain ``pytest`` for
+    someone who never asked for the live suite."""
+    from helixgen.device.discovery import resolve_ip
+
     try:
-        files = list((_REAL_HELIXGEN / "devices").glob("*.json"))
-    except OSError:
+        return resolve_ip(warn=False)  # warn=False: no stderr noise at collection
+    except Exception:  # noqa: BLE001 — no configured device is a skip, not an error
         return None
-    for p in files:
-        try:
-            data = json.loads(p.read_text())
-            if not isinstance(data, dict) or not data.get("ip"):
-                continue
-            # a device record the suite does not own: any field may be junk,
-            # and this runs at COLLECTION time on every default (offline) run,
-            # so a raise here would break `pytest` for someone who never asked
-            # for the live suite.
-            key = (float(data.get("ip_updated_at") or 0.0), str(data.get("serial") or p.stem))
-        except (OSError, ValueError, TypeError):
-            continue
-        if best is None or key > best[0]:
-            best = (key, str(data["ip"]))
-    return best[1] if best else None
 
 
-DEVICE_IP = os.environ.get("HELIXGEN_HELIX_IP") or _persisted_device_ip()
+DEVICE_IP = _resolve_device_ip()
 
 
 def pytest_collection_modifyitems(config, items):
@@ -216,7 +216,9 @@ def _live_env(scratch: Path, real_library: Path):
     # listing cache on push, which `_wait_ir_registered` depends on) must fail
     # as itself, not as a TUI regression.
     engine = version("helixgen")
-    if tuple(int(p) for p in engine.split(".")[:2]) < (0, 31):
+    # findall, not split(".") + int(): a pre-release like "0.31rc1" would raise
+    # ValueError out of the gate itself instead of reaching the message below.
+    if tuple(int(p) for p in re.findall(r"\d+", engine)[:2]) < (0, 31):
         pytest.fail(
             f"live suite needs helixgen >=0.31 (installed: {engine}) — below "
             "that, a pushed IR never re-appears in list-irs (core #38) and the "

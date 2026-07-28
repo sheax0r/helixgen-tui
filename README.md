@@ -112,7 +112,10 @@ HELIXGEN_TUI_LIVE=1 uv run pytest tests/live -q
 
 It needs port 2002 TCP-reachable, an ingested block library, and a resolvable
 device IP (`HELIXGEN_HELIX_IP`, else a `helixgen device discover` record) —
-without any of those it skips rather than fails. All local helixgen state is
+without any of those it skips rather than fails. An installed `helixgen` below
+`0.31` is the one hard failure: below it a pushed IR never re-appears in
+`list-irs` (core #38), so the IR tests would read as a TUI regression. All local
+helixgen state is
 redirected to a scratch dir for the run and every artifact is `HGTEST`-prefixed;
 the safety model and the deliberately excluded verbs are documented in
 `tests/live/conftest.py`.

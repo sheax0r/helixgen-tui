@@ -104,11 +104,16 @@ def test_plan_prune_irs_matches_engine_cli(real_port, helix):
     confirm modal, and reading a key the engine doesn't emit yields a
     well-formed "(nothing to prune)" plan while the confirm deletes for real
     (that exact bug shipped). Cross-check against the engine's own dry run."""
-    plan = real_port.plan_prune_irs()
-    _assert_plan(plan)
     code, out, err = helix("device", "ir-prune", "--json", timeout=300)
     assert code == 0, err or out
-    orphans = json.loads(out).get("orphans") or []
+    report = json.loads(out)
+    if report.get("warnings"):
+        # the port refuses to PLAN over these (the engine would refuse the
+        # confirm), so there is no plan to cross-check on this device
+        pytest.skip(f"device prune reports verification warnings: {report['warnings']}")
+    plan = real_port.plan_prune_irs()
+    _assert_plan(plan)
+    orphans = report.get("orphans") or []
     joined = " ".join(plan.lines)
     if orphans:
         for o in orphans:
@@ -128,14 +133,21 @@ def test_plan_restore_is_unsupported(real_port):
 # --------------------------------------------------------------------------
 
 
-def test_probe_unconfigured_raises_without_socket(monkeypatch):
+def test_probe_unconfigured_raises_without_connecting(monkeypatch):
     """No --ip, no $HELIXGEN_HELIX_IP, no device record (scratch home):
-    DeviceUnreachable immediately, and provably no socket."""
+    DeviceUnreachable immediately, and provably without opening a session.
+
+    Bombing ``socket`` alone would NOT prove it — ``HelixClient`` is pyzmq,
+    whose sockets are created in C and never touch the stdlib module, and a
+    leaked connect would surface as ``DeviceUnreachable`` anyway (just a zmq
+    timeout later), so the test would pass either way. Bomb the port's own
+    session hinge instead, which is transport-independent."""
     monkeypatch.delenv("HELIXGEN_HELIX_IP", raising=False)
 
-    def _bomb(*a, **k):  # any socket construction = the hinge leaked a connect
-        raise AssertionError("offline probe opened a socket")
+    def _bomb(*a, **k):  # any session/socket = the offline hinge leaked
+        raise AssertionError("offline probe tried to reach the device")
 
+    monkeypatch.setattr(RealDevicePort, "_session", _bomb)
     monkeypatch.setattr(socket, "socket", _bomb)
     monkeypatch.setattr(socket, "create_connection", _bomb)
     with pytest.raises(DeviceUnreachable):
