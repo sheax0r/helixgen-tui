@@ -397,7 +397,35 @@ the `tests/live/` branch:
   stdlib `socket` its own docstring calls inert; `_write_test_wav` builds a
   seeded decay envelope where two distinct bytes would do.
 
-## 26. `DeviceService`'s 5s timeout is shorter than the device verbs it guards (review finding, 2026-07-27)
+## 26. `DeviceService`'s 5s timeout is shorter than the device verbs it guards (review finding, 2026-07-27) — **CONFIRMED on hardware 2026-07-28**
+
+**Measured** against the Stadium XL (fw 1.3.2 b1340), helixgen 0.32.0, with the
+service driven exactly as the app drives it (state `connected`, real
+daemon-thread spawn):
+
+| call | wall clock |
+|---|---|
+| `port.probe()` | 2.97 s |
+| `port.plan_prune_irs()` | **51.42 s** |
+| `port.plan_sync_all(gc=False)` | 0.00 s (local manifest only — no device I/O) |
+| the same `plan_prune_irs` through `DeviceService.query` | returns at **5.01 s** with `ok=False`, `message='Prune: timed out'` |
+
+So the Prune preview reports a timeout **every time** on this device and the
+preview never appears; the 10× margin means no plausible device is fast enough.
+Sync *planning* is unaffected (no device I/O); the sync *execute* path is
+unmeasured here but runs through the same 5 s join.
+
+The timeout is a **join, not a cancel**: `_call_guarded` starts a daemon
+thread and stops waiting, so a mutating verb slower than the join reports
+failure to the footer and then completes anyway — a false failure over a write
+that lands. Pinned by
+`tests/core/test_device_service.py::test_run_timeout_reports_failure_while_the_write_still_lands`.
+
+Fix still deferred deliberately (it is a UX decision, not a constant — see
+below); this entry now records evidence rather than inference.
+
+### Original analysis (2026-07-27)
+
 
 `DeviceService.__init__` defaults `timeout=5.0` (`core/device.py`) and
 `app.py`'s `on_mount` never overrides it, so every `run()`/`query()` joins its

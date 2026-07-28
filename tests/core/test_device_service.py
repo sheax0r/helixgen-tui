@@ -203,3 +203,44 @@ def test_query_timeout_yields_failure_with_timed_out_message():
     assert results[-1].ok is False
     assert results[-1].value is None
     assert "timed out" in results[-1].message
+
+
+def test_run_timeout_reports_failure_while_the_write_still_lands():
+    """Backlog #26's dangerous half: the timeout is a JOIN, not a cancel.
+
+    ``_call_guarded`` starts a daemon thread and gives up waiting after
+    ``timeout``; nothing stops the thread. So a mutating verb slower than the
+    join reports ``"<label>: timed out"`` to the footer and then completes
+    anyway — a false failure over a write that lands. Measured on hardware
+    2026-07-28: ``plan_prune_irs`` takes 51.4s against the 5s default, so the
+    app's Prune flow hits this every time.
+    """
+    port = FakeDevicePort(state=_CONNECTED)
+    svc = DeviceService(port, on_state=lambda _s: None, timeout=0.01)
+    svc._state = _CONNECTED  # noqa: SLF001 — test drives the online precondition
+
+    landed: list[str] = []
+    results: list[OpResult] = []
+
+    def _slow_write() -> OpResult:
+        time.sleep(0.2)
+        landed.append("device mutated")  # the write the user was told failed
+        return OpResult(ok=True, message="pruned")
+
+    svc.run("Prune", _slow_write, results.append)
+
+    deadline = time.monotonic() + 0.9
+    while not results and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert results, "done callback was never invoked"
+    assert results[-1].ok is False
+    assert "timed out" in results[-1].message
+    assert not landed, "precondition: the write had not finished at report time"
+
+    deadline = time.monotonic() + 0.9
+    while not landed and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert landed == ["device mutated"], (
+        "the worker was abandoned, not cancelled — the write lands after the "
+        "failure is reported"
+    )
