@@ -193,7 +193,7 @@ def test_sync_lifecycle_via_port(real_port, helix, cli, scratch, amp_blocks):
         _assert_op(
             res,
             True,
-            f"synced setlist {SETLIST!r} — 2 installed, 0 updated, 0 skipped, 0 failed",
+            f"synced setlist {SETLIST!r} — 2 installed, 0 updated, 0 deleted, 0 skipped, 0 failed",
         )
 
         # sync_tone rides the now-synced setlist; unchanged tones skip
@@ -201,7 +201,7 @@ def test_sync_lifecycle_via_port(real_port, helix, cli, scratch, amp_blocks):
         _assert_op(
             res,
             True,
-            f"synced {TONE_A!r} — 0 installed, 0 updated, 2 skipped, 0 failed",
+            f"synced {TONE_A!r} — 0 installed, 0 updated, 0 deleted, 2 skipped, 0 failed",
         )
 
         # sync_all is a managed-set mirror: only synced manifest setlists
@@ -213,7 +213,7 @@ def test_sync_lifecycle_via_port(real_port, helix, cli, scratch, amp_blocks):
         _assert_op(
             res,
             True,
-            "synced all setlists — 0 installed, 0 updated, 2 skipped, 0 failed",
+            "synced all setlists — 0 installed, 0 updated, 0 deleted, 2 skipped, 0 failed",
         )
         untracked_after = [
             (m.get("cid_"), m.get("name"), m.get("posi"))
@@ -420,7 +420,14 @@ def test_prune_irs_executes_only_against_hgtest_orphans(real_port, helix, cli, s
         assert name in planned, planned
 
         res = real_port.prune_irs()
-        _assert_op(res, True, "pruned 1 unreferenced device IR(s)")
+        # NOT _assert_op, for the same reason as delete_ir above: the engine's
+        # advisory SFTP half (``file_removed``, stamped per deleted entry) fails
+        # on any machine without a usable hedit key, and the port then appends
+        # "(N backing file(s) left on the device)". The registry check below is
+        # the real assertion.
+        assert isinstance(res, OpResult)
+        assert res.ok is True, res.message
+        assert res.message.startswith("pruned 1 unreferenced device IR(s)"), res.message
         assert irhash not in _device_ir_rows(helix)
     finally:
         _teardown_device_ir(helix, irhash, registered)

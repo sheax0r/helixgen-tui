@@ -244,6 +244,24 @@ def test_sync_setlist_summarizes_report_counts(tmp_home, monkeypatch):
     assert "Gig 1" in result.message
 
 
+def test_sync_summary_is_pinned_whole_not_by_substring(tmp_home, monkeypatch):
+    """Every other offline sync test uses ``in`` checks, so a bucket added to
+    (or reordered in) the summary stays green here while the live suite — which
+    compares with ``==`` — only fails on hardware, months later. Pin the whole
+    string so the drift is caught by ``uv run pytest``."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    monkeypatch.setattr(
+        setlist_sync, "sync_setlists", lambda *a, **k: _canned_report(installed=["a", "b"])
+    )
+
+    result = build_core().device.sync_setlist("Gig 1", gc=False)
+    assert result.message == (
+        "synced setlist 'Gig 1' — 2 installed, 0 updated, 0 deleted, 0 skipped, 0 failed"
+    )
+
+
 def test_sync_all_failures_flip_ok_false_and_are_counted(tmp_home, monkeypatch):
     from helixgen.device import setlist_sync
 
@@ -483,6 +501,46 @@ def test_plan_prune_irs_connect_failure_flips_the_app_offline(tmp_home, monkeypa
         build_core().device.plan_prune_irs()
 
 
+def test_prune_irs_reports_the_backing_files_it_left_behind(tmp_home, monkeypatch):
+    """``ir_prune`` stamps ``file_removed`` on every deleted entry, same as
+    ``delete_device_ir``. Counting only ``len(deleted)`` reported a clean prune
+    over registry rows removed with their .wav files still on the device — the
+    wedged state --force-wedge exists to clean, hidden on the destructive
+    sibling of the verb already fixed for it."""
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    monkeypatch.setattr(
+        maintenance,
+        "ir_prune",
+        lambda **k: _prune_report(
+            deleted=[
+                {"name": "Old Cab", "file_removed": True},
+                {"name": "Older Cab", "file_removed": False},
+            ]
+        ),
+    )
+    result = build_core().device.prune_irs()
+    assert result.ok is True
+    assert result.message == (
+        "pruned 2 unreferenced device IR(s) (1 backing file(s) left on the device)"
+    )
+
+
+def test_prune_irs_clean_run_says_nothing_about_backing_files(tmp_home, monkeypatch):
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    monkeypatch.setattr(
+        maintenance,
+        "ir_prune",
+        lambda **k: _prune_report(deleted=[{"name": "Old Cab", "file_removed": True}]),
+    )
+    result = build_core().device.prune_irs()
+    assert result.ok is True
+    assert result.message == "pruned 1 unreferenced device IR(s)"
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -524,7 +582,11 @@ def test_prune_irs_counts_deletions_and_fails_on_engine_errors(tmp_home, monkeyp
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
     monkeypatch.setattr(
-        maintenance, "ir_prune", lambda **k: _prune_report(deleted=[{"name": "Old Cab"}])
+        maintenance,
+        "ir_prune",
+        # the engine stamps ``file_removed`` on every deleted entry; True is the
+        # clean case (see the wedged-file tests below)
+        lambda **k: _prune_report(deleted=[{"name": "Old Cab", "file_removed": True}]),
     )
     result = build_core().device.prune_irs()
     assert result.ok is True
@@ -636,8 +698,9 @@ def test_connect_failure_markers_still_exist_in_the_installed_engine():
 @pytest.mark.parametrize(
     "verb, keys",
     [
-        # plan_prune_irs/prune_irs read orphans+warnings and deleted+errors
-        ("ir_prune", ("orphans", "deleted", "warnings", "errors")),
+        # plan_prune_irs/prune_irs read orphans+warnings and deleted+errors,
+        # plus the per-entry SFTP half prune_irs folds
+        ("ir_prune", ("orphans", "deleted", "warnings", "errors", "file_removed")),
         # delete_ir folds both halves of the report
         ("delete_device_ir", ("ok", "file_removed")),
     ],

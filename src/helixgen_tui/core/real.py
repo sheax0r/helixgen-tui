@@ -536,8 +536,17 @@ class RealDevicePort:
             # Per-IR delete refusals accumulate in ``errors`` and set
             # ``ok=False`` WITHOUT raising (same class as the push_ir fix).
             errors = report.get("errors") or []
-            deleted = len(report.get("deleted") or [])
-            message = f"pruned {deleted} unreferenced device IR(s)"
+            deleted = report.get("deleted") or []
+            message = f"pruned {len(deleted)} unreferenced device IR(s)"
+            # ``ir_prune`` records the advisory SFTP half per deleted entry
+            # (``entry["file_removed"]``), exactly as ``delete_device_ir`` does.
+            # Counting only the entries reported a clean prune over N registry
+            # rows removed with their .wav files left behind — the wedged state
+            # the engine needs --force-wedge to clean, and the same fold
+            # ``delete_ir`` already applies on the single-IR sibling.
+            wedged = sum(1 for e in deleted if not (e or {}).get("file_removed"))
+            if wedged:
+                message += f" ({wedged} backing file(s) left on the device)"
             if errors:
                 message = f"{message} — {len(errors)} failed: {errors[0]}"
             return OpResult(ok=not errors, message=message)

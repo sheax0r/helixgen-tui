@@ -478,3 +478,44 @@ Two halves of the same gap, both left by the live-suite branch:
   device-dependent — the engine's `ir_prune(only=...)` narrows to given hashes
   and still refuses referenced ones, so a test-only call could prune exactly the
   suite's own `HGTEST` orphan on any device.
+
+## 29. The `gc` half of sync is on the port surface but folded by nothing (review finding, 2026-07-27)
+
+`setlist_sync.sync_setlists` reports GC deletions in its **own** bucket,
+`gc: {deleted: [...]}`, separate from `pool: {deleted: [...]}`.
+`_summarize_sync_report` reads only `pool`, so a `gc=True` sync would report
+`… 0 deleted …` over a GC phase that removed real pool presets — precisely the
+"reported a no-op over a real device mutation" class the `pool.deleted` fold was
+written to close, on the more destructive half. Latent today: every UI call site
+passes `gc=False` (`screens/setlists.py:406,416,438`), which is also why the
+live suite excludes it. Related, same latency: `sync_setlist(name, gc=True)` is
+accepted by the port signature, but the engine honours `gc` only on the
+all-setlists run, so it is silently a no-op there.
+
+Work when picked up: either fold `report["gc"]["deleted"]` into the summary and
+pin it offline like the `pool` buckets, or — the smaller diff — drop `gc` from
+the port surface (`sync_setlist`/`sync_all`/`plan_sync_all`) until a UI gesture
+actually needs it. Do not leave it half-wired: `plan_sync_all(gc=True)` already
+renders "GC: remove pool presets no setlist references" as a confirm line, so
+the plan promises an outcome the result message cannot report.
+
+## 30. Device IR delete/rename address by display name, push addresses by hash (review finding, 2026-07-27)
+
+`action_push_ir` deliberately sends `ir.irhash or ir.name` ("names are routinely
+duplicated … core resolves an exact hash key first", `screens/irs.py:368-370`).
+`action_delete_ir` and the rename input both send `ir.name`
+(`screens/irs.py:384,496`), and the port's own live tests address both verbs by
+`irhash` — so the screen is the only caller taking the ambiguous path. With two
+device IRs sharing a display name, `resolve_device_ir_live` raises
+`ambiguous … use the 32-hex hash`; it fails soft with that text, so nothing is
+mis-deleted, but the TUI has no input for a hash and the user cannot proceed.
+For delete, the refusal also arrives *after* they confirm the destructive modal
+(`plan_delete_ir` formats without resolving).
+
+Not a one-line swap: `delete_ir`/`rename_ir` interpolate the argument into their
+result message, so passing a hash would replace the IR's name with 32 hex
+characters in the footer for the common, unambiguous case. Work when picked up:
+address by hash and carry the display name separately for the message (as
+`push_ir` already does, relabelling via the IR mapping), and have
+`plan_delete_ir` resolve so an ambiguity is reported before the modal opens
+rather than after the confirm. Overlaps #22's "identical rows" theme.
