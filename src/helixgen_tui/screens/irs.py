@@ -29,7 +29,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import DataTable, Input, Static
 
-from helixgen_tui.core.device import QueryResult
+from helixgen_tui.core.device import DEVICE_OFFLINE, QueryResult
 from helixgen_tui.core.models import IrVM, MutationPlan, OpResult
 from helixgen_tui.screens.base import LibrarianScreen
 from helixgen_tui.screens.filterable import FilterableTableMixin
@@ -41,7 +41,7 @@ _DEVICE_PLACEHOLDER_ID = "irs-device-placeholder"
 _RENAME_INPUT_ID = "irs-rename-input"
 _FILTER_ID = "irs-filter"
 
-_DEVICE_PLACEHOLDER_TEXT = "unavailable — device offline"
+_DEVICE_PLACEHOLDER_TEXT = f"unavailable — {DEVICE_OFFLINE}"
 
 
 def _short_hash(irhash: str | None) -> str:
@@ -268,7 +268,7 @@ class IrsScreen(LibrarianScreen):
         from the UI thread."""
         service = self.app.device_service
         if service is None:
-            self._apply_device_irs(QueryResult(ok=False, value=None, message="device offline"))
+            self._apply_device_irs(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
             return
         device = self.app.core.device
         service.query("list_device_irs", device.list_device_irs, self._on_device_irs_query_done)

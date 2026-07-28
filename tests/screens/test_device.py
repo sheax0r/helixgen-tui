@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.models import DeviceStateVM
-from helixgen_tui.screens.device import RestorePathModal
+from helixgen_tui.screens.device import _OFFLINE_INFO, RestorePathModal
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
 
@@ -201,7 +201,12 @@ async def test_retry_reconnects_and_refreshes_info():
         await pilot.press("4")
         await pilot.pause()
         info_text = str(app.screen.query_one("#device-info").render())
-        assert "offline" in info_text.lower()
+        # The exact placeholder, not just "offline": the panel branches on the
+        # offline message to choose between it and a soft failure's own text,
+        # and a substring check passes on either — so the retry affordance
+        # ("Press r") could vanish with nothing failing.
+        assert info_text == _OFFLINE_INFO
+        assert str(app.screen.query_one("#device-locks").render()) == ""
 
         port.state = _CONNECTED
         await pilot.press("r")

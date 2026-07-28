@@ -4,6 +4,30 @@ Recorded against **helixgen 0.26.0** by live inspection (`pydoc`, `inspect`,
 scratch-`$HELIXGEN_HOME` probes) on 2026-07-17. Everything below was verified
 by executing the calls against a throwaway home — nothing is guessed.
 
+> **Superseded in part, 2026-07-27 (helixgen 0.31/0.32).** The live smoke suite
+> (`tests/live/`) now executes the networked verbs against real hardware, so
+> the "none of the networked calls were executed" caveat below no longer holds
+> — see `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`. Two corrections
+> matter more than the rest:
+>
+> * **Report shapes are recorded here for `sync_setlists` only, and that
+>   asymmetry caused a real defect** — `plan_prune_irs` folded `prunable`/`prune`,
+>   keys `ir_prune` has never emitted, into a *destructive* confirm. The shapes
+>   the port folds are: `ir_prune` -> `{ok, dry_run, device_irs, referenced,
+>   protected, orphans, deleted, warnings, errors}` (each `deleted` entry carries
+>   `file_removed`); `delete_device_ir` -> `{ok, file_removed, ...}`;
+>   `upload_missing_irs` -> per-hash `{ok, outcome, note}`. Every key the port
+>   reads is now pinned to the installed engine's *source* in
+>   `tests/core/test_real_core.py`; add the pin with the fold, not after.
+> * **`backup_setlist` takes `presets=`**, which the port passes from its own
+>   `list_presets(strict=True)` — the engine's internal listing is non-strict
+>   and reads a dropped frame as an empty backup.
+>
+> `sync_setlists`' mirror-delete candidates come from the **whole manifest**,
+> not the setlists passed in `setlists=`; `plan_sync_all` says so in its confirm
+> because of it. Still signature-only, never executed even by the live suite:
+> `restore`, and `sync_all(gc=True)`.
+
 ## Path resolution — `helixgen.home`
 
 Pure path computation, reads env **at call time** (never at import), never

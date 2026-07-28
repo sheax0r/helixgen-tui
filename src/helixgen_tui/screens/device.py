@@ -28,7 +28,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
-from helixgen_tui.core.device import QueryResult
+from helixgen_tui.core.device import DEVICE_OFFLINE, QueryResult
 from helixgen_tui.core.models import MutationPlan, OpResult
 from helixgen_tui.screens.base import LibrarianScreen
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
@@ -37,8 +37,8 @@ _INFO_ID = "device-info"
 _LOCKS_ID = "device-locks"
 _RESTORE_INPUT_ID = "device-restore-path"
 
-_OFFLINE_INFO = "device offline — no info available. Press r to retry."
-_OFFLINE_REFUSAL = "device offline — press r to retry"
+_OFFLINE_INFO = f"{DEVICE_OFFLINE} — no info available. Press r to retry."
+_OFFLINE_REFUSAL = f"{DEVICE_OFFLINE} — press r to retry"
 
 
 class RestorePathModal(ModalScreen[str | None]):
@@ -161,7 +161,7 @@ class DeviceScreen(LibrarianScreen):
         the result reaches `_apply_info` only via `on_info_query_ready`, so
         the widget is only ever touched from the UI thread."""
         if not self._connected():
-            self._apply_info(QueryResult(ok=False, value=None, message="device offline"))
+            self._apply_info(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
             self.query_one(f"#{_LOCKS_ID}", Static).update("")
             return
         device = self.app.core.device
@@ -183,7 +183,7 @@ class DeviceScreen(LibrarianScreen):
             # offline" here contradicted the header and discarded the only copy
             # of that text. The genuine offline case still reads exactly as
             # before: _refresh_info's short-circuit passes "device offline".
-            failed_soft = result.message and result.message != "device offline"
+            failed_soft = result.message and result.message != DEVICE_OFFLINE
             info_widget.update(result.message if failed_soft else _OFFLINE_INFO)
             return
         info: dict = result.value  # type: ignore[assignment]
@@ -214,7 +214,7 @@ class DeviceScreen(LibrarianScreen):
             # Same split as _apply_info: a soft failure on a reachable device
             # says why (blanking the panel made `l` look like a dead key), the
             # offline/empty case stays blank as _refresh_info renders it.
-            failed_soft = result.message and result.message != "device offline"
+            failed_soft = result.message and result.message != DEVICE_OFFLINE
             locks_widget.update(result.message if failed_soft else "")
             return
         locks = list(result.value)  # type: ignore[arg-type]

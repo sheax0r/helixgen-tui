@@ -438,24 +438,27 @@ def test_prune_irs_executes_only_against_hgtest_orphans(real_port, helix, cli, s
 # --------------------------------------------------------------------------
 
 
-def test_backup_via_port(real_port, helix, scratch):
+def test_backup_via_port(real_port, helix, scratch, monkeypatch):
     code, out, err = helix("device", "list", "--json")
     assert code == 0, err or out
     n = len(json.loads(out))
-    # The upfront `device_backup` fixture already wrote one .sbe per preset
-    # into this same dir under the same names, so a bare file COUNT would hold
-    # whether or not the port wrote anything. Compare mtimes instead.
-    backups = scratch / "backups"
-    before = {p: p.stat().st_mtime_ns for p in backups.glob("*.sbe")}
-    time.sleep(0.01)  # mtime_ns resolution guard on coarse filesystems
+    # Point $HELIXGEN_DEVICE_BACKUPS (read per call by the engine's
+    # `default_backup_dir`) at an EMPTY dir for this test. The session dir
+    # already holds one .sbe per preset from the upfront `device_backup`
+    # fixture, under the same names and with the same bytes — so neither a file
+    # count nor a content diff there can tell "the port wrote" from "the port
+    # did nothing", and an mtime diff needs a sleep whose length is a bet on
+    # the filesystem's timestamp resolution. Writing into empty is unambiguous,
+    # and it leaves the session's restore point untouched.
+    dest = scratch / "backups-port"
+    dest.mkdir()
+    monkeypatch.setenv("HELIXGEN_DEVICE_BACKUPS", str(dest))
+
     res = real_port.backup()
     _assert_op(res, True, f"backed up {n} preset(s)")
-    # $HELIXGEN_DEVICE_BACKUPS redirects the port's default backup dir
-    after = {p: p.stat().st_mtime_ns for p in backups.glob("*.sbe")}
-    assert len(after) >= n
-    assert any(before.get(p) != m for p, m in after.items()), (
-        "no .sbe under $HELIXGEN_DEVICE_BACKUPS was written or rewritten — "
-        "the port's backup did not land in the scratch redirect"
+    assert len(list(dest.glob("*.sbe"))) == n, (
+        "the port's backup did not land in $HELIXGEN_DEVICE_BACKUPS — it went "
+        "to the engine's hardcoded ~/.helixgen fallback, i.e. the real home"
     )
 
 

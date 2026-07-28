@@ -35,6 +35,13 @@ from typing import Callable
 from helixgen_tui.core.models import DeviceStateVM, OpResult
 from helixgen_tui.core.ports import DevicePort, DeviceUnreachable
 
+#: The one message every offline short-circuit reports. Screens branch on it to
+#: tell "the device is gone" from "a reachable device refused this read", so it
+#: is a shared constant rather than a literal repeated on both sides — reworded
+#: in one place, the branches silently stopped matching and the panels lost
+#: their retry affordance with nothing failing.
+DEVICE_OFFLINE = "device offline"
+
 _OFFLINE = DeviceStateVM(
     status="offline",
     model=None,
@@ -107,7 +114,7 @@ class DeviceService:
         service offline; exceeding ``timeout`` yields ``ok=False`` "timed out".
         """
         if self._state.status == "offline":
-            done(OpResult(ok=False, message="device offline"))
+            done(OpResult(ok=False, message=DEVICE_OFFLINE))
             return
         self._spawn(lambda: self._run_guarded(label, fn, done))
 
@@ -126,7 +133,7 @@ class DeviceService:
         read is free of I/O (list_device_irs, plan_* methods, ...).
         """
         if self._state.status == "offline":
-            done(QueryResult(ok=False, value=None, message="device offline"))
+            done(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
             return
         self._spawn(lambda: self._query_guarded(label, fn, done))
 
@@ -195,7 +202,7 @@ class DeviceService:
             done(OpResult(ok=False, message=f"{label}: timed out"))
         elif status == "unreachable":
             self._set_state(_OFFLINE)
-            done(OpResult(ok=False, message="device offline"))
+            done(OpResult(ok=False, message=DEVICE_OFFLINE))
         elif status == "error":
             done(OpResult(ok=False, message=f"{label}: {payload}"))
         else:
@@ -212,7 +219,7 @@ class DeviceService:
             done(QueryResult(ok=False, value=None, message=f"{label}: timed out"))
         elif status == "unreachable":
             self._set_state(_OFFLINE)
-            done(QueryResult(ok=False, value=None, message="device offline"))
+            done(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
         elif status == "error":
             done(QueryResult(ok=False, value=None, message=f"{label}: {payload}"))
         else:

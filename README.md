@@ -67,11 +67,22 @@ swap the model. Selecting the output node edits its level/pan; the input node's
 source is read-only. Add/remove refuse on a parallel-routed path. Edits write to
 the local library file on `s` — never to the device.
 
+**Setlist sync:** `✓` marks a setlist the device mirrors; `○` is a local
+draft. `S` syncs the selected setlist and opts it into mirroring; `A` syncs
+every `✓` setlist and never opts a draft in — so a library where nothing has
+been synced yet shows *(no synced setlists to sync)* in the confirm. Both also
+remove device presets for tones you have **unsynced** since the last run,
+which is why the sync-all confirm says so; a preset a live setlist still
+references is left alone and named in the status bar.
+
 **Offline-first:** the app works fully with no device on the LAN — Library,
 Setlists, and IRs stay browsable from local state. Device-mutating actions
 (activate, sync, push, backup, restore, ...) simply refuse with a reason in
 the status bar when no Helix is reachable, and reconnect automatically (or
-via `r` on the Device tab) once one is.
+via `r` on the Device tab) once one is. A device that *is* reachable but
+refuses or aborts an operation is a third state: the header stays connected
+and the panel or status bar shows the engine's own reason and remediation
+text, rather than the app going offline over one dropped frame.
 
 **Design principle: slots are invisible.** The UI speaks in tones and
 setlists only — slot addresses like `5A` are an implementation detail the

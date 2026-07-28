@@ -7,6 +7,7 @@ import re
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan
+from helixgen_tui.screens.irs import _DEVICE_PLACEHOLDER_TEXT
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
 from textual.widgets import DataTable, Input
@@ -80,8 +81,10 @@ async def test_device_pane_shows_offline_placeholder_when_disconnected():
         placeholder_text = "\n".join(
             str(w.render()) for w in app.screen.query("#irs-device-placeholder")
         )
-        assert "unavailable" in placeholder_text
-        assert "device offline" in placeholder_text
+        # The exact placeholder: the pane branches on the offline message to
+        # choose between it and a soft failure's own text, and a substring
+        # check passes on either.
+        assert placeholder_text == _DEVICE_PLACEHOLDER_TEXT
         device_table = app.screen.query_one("#irs-device-table", DataTable)
         assert device_table.display is False
 

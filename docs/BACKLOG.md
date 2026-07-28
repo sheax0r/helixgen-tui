@@ -519,3 +519,40 @@ address by hash and carry the display name separately for the message (as
 `push_ir` already does, relabelling via the IR mapping), and have
 `plan_delete_ir` resolve so an ambiguity is reported before the modal opens
 rather than after the confirm. Overlaps #22's "identical rows" theme.
+
+## 31. Engine: `sync_setlists` reports nothing when the device *rejects* a mirror delete (review finding, 2026-07-27)
+
+Engine-side, so it cannot be fixed here — file against helixgen-core when
+picked up.
+
+In `setlist_sync.sync_setlists`' managed-set mirror-delete loop, a
+`client._raw.delete(...)` that returns **falsy** (device non-zero status, no
+exception) emits a progress event and deliberately touches neither `errors[]`
+nor `result["pool"]` — the comment says so verbatim ("Progress-only — do NOT
+touch errors[]/result (existing behavior preserved)"). A pool preset the device
+refused to delete therefore appears in `deleted`, `delete_skipped` and `errors`
+alike: nowhere.
+
+Consequence here: `_summarize_sync_report` reports `ok=True` and a `deleted`
+count that silently under-counts, over a device that refused a real delete —
+the same "success over an engine refusal" class the four `core/real.py` verbs
+were fixed for (spec `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`),
+on the one path where the port has no signal to fold. Nothing in this repo can
+detect it; the fix is a bucket (or an `errors[]` entry) on the engine side.
+
+## 32. `sync_tone` can mirror-delete unrelated tones with no confirm (review finding, 2026-07-27)
+
+`S` on the Library screen is an instant-tier action: no `ConfirmModal`. It calls
+`sync_tone` -> `sync_setlists(setlists=[...])`, and the engine's managed-set
+mirror deletes are scoped to the **whole manifest**, not the setlists passed in
+— so syncing one tone can delete *other* tones' presets from the device pool,
+with no preview and no confirm. `sync_setlist` (`S` on Setlists) has the same
+shape. `plan_sync_all` now names the class of deletes in its confirm (it can't
+name the tones: that needs prior-placement evidence plus a device pool listing),
+but the two targeted verbs have no confirm to put it in.
+
+Work when picked up: decide whether a targeted sync deserves a confirm at all —
+the deletes are the ordinary "unsync a tone, then sync" flow working as designed,
+and gating every `S` behind a modal would be a real usability cost. The cheaper
+half is a device-side preview verb in core that returns the delete candidates, so
+a confirm can name them instead of the class. Related: #29 (`gc` half-wired).

@@ -93,12 +93,19 @@ def test_plan_sync_all(real_port):
     drafts = [s for s in manifest.setlists() if not manifest.is_synced(s)]
     plan = real_port.plan_sync_all(gc=False)
     _assert_plan(plan)
+    # The confirm also runs the managed-set mirror deletes, so the plan always
+    # carries that caveat line on top of the per-setlist ones.
+    assert plan.lines[-1].startswith("Also removes device presets"), plan.lines
+    setlist_lines = plan.lines[:-1]
     if expected:
-        assert len(plan.lines) == len(expected)
+        assert len(setlist_lines) == len(expected)
         for name in expected:
-            assert any(line.startswith(f"{name} (") for line in plan.lines), (name, plan.lines)
+            assert any(line.startswith(f"{name} (") for line in setlist_lines), (
+                name,
+                plan.lines,
+            )
     else:
-        assert plan.lines == ("(no synced setlists to sync)",)
+        assert setlist_lines == ("(no synced setlists to sync)",)
     for name in drafts:
         assert not any(line.startswith(f"{name} (") for line in plan.lines), (name, plan.lines)
     gc_plan = real_port.plan_sync_all(gc=True)

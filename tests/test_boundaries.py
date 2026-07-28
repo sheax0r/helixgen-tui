@@ -118,3 +118,16 @@ def test_real_home_guard_snapshot_excludes_only_locks_and_git_metadata(tmp_path)
         str(tmp_path / "library" / "index.json"),
     }
     assert _snapshot_real_home(tmp_path / "missing") is None
+
+    # The exclusion is against the path RELATIVE to the root. A home that
+    # itself sits under a ``.git`` component must still be snapshotted — the
+    # absolute-path variant returns {} for both snapshots there, `before ==
+    # after` holds trivially and the whole guard goes silently inert. tmp_path
+    # never contains ``.git``, so the case above cannot tell the two apart.
+    under_git = tmp_path / ".git" / "home"
+    (under_git / "library").mkdir(parents=True)
+    (under_git / "library" / "index.json").write_text("{}")
+    assert set(_snapshot_real_home(under_git, locks=under_git / "locks")) == {
+        str(under_git / "library"),
+        str(under_git / "library" / "index.json"),
+    }

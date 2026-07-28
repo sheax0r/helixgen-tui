@@ -102,6 +102,24 @@ def _is_transport_oserror(exc: OSError) -> bool:
     return isinstance(exc, socket.gaierror) or exc.errno in _TRANSPORT_ERRNOS
 
 
+def _as_unreachable(exc: BaseException) -> DeviceUnreachable | None:
+    """THE classification rule, in one place: a connect-class ``HelixError`` or
+    a transport-errno ``OSError`` means the device is gone; everything else is
+    an abort on a reachable device and is not ours to convert.
+
+    ``_session``, ``_op`` and ``plan_prune_irs`` each used to carry their own
+    copy of the two ``except`` clauses — three places to keep in sync for one
+    rule, on the verbs where getting it wrong either blanks the app over a
+    healthy device or leaves the header claiming "connected" over a dead one."""
+    from helixgen.device import HelixError
+
+    if isinstance(exc, HelixError) and _is_connect_failure(exc):
+        return DeviceUnreachable(str(exc))
+    if isinstance(exc, OSError) and _is_transport_oserror(exc):
+        return DeviceUnreachable(str(exc))
+    return None
+
+
 class RealDevicePort:
     """DevicePort over helixgen's device client. Offline-first, thin per verb."""
 
@@ -133,42 +151,30 @@ class RealDevicePort:
         propagates unchanged, so ``_op`` can fail it soft and
         ``DeviceService.query``'s error branch can report it without the header
         lying about connectivity."""
-        from helixgen.device import HelixClient, HelixError
+        from helixgen.device import HelixClient
 
         try:
             with HelixClient(ip, self._port) as client:
                 yield client
-        except HelixError as exc:
-            if _is_connect_failure(exc):
-                raise DeviceUnreachable(str(exc)) from exc
-            raise
-        except OSError as exc:
-            if _is_transport_oserror(exc):
-                raise DeviceUnreachable(str(exc)) from exc
+        except Exception as exc:
+            if (unreachable := _as_unreachable(exc)) is not None:
+                raise unreachable from exc
             raise
 
     def _op(self, label: str, fn) -> OpResult:
         """Run a mutating device closure -> OpResult. Connect failures raise
         DeviceUnreachable (offline); anything else fails soft as ok=False,
         keeping the engine's remediation text."""
-        from helixgen.device import HelixError
-
         try:
             return fn()
         except DeviceUnreachable:
             raise
-        except HelixError as exc:
+        except Exception as exc:  # noqa: BLE001 — surfaced to the footer as ok=False
             # The verbs that connect themselves (``sync``, ``push_ir``,
             # ``prune_irs``) never pass through ``_session``, so classify here
-            # too — same rule, same closed set of connect markers.
-            if _is_connect_failure(exc):
-                raise DeviceUnreachable(str(exc)) from exc
-            return OpResult(ok=False, message=f"{label} failed: {exc}")
-        except OSError as exc:
-            if _is_transport_oserror(exc):
-                raise DeviceUnreachable(str(exc)) from exc
-            return OpResult(ok=False, message=f"{label} failed: {exc}")
-        except Exception as exc:  # noqa: BLE001 — surfaced to the footer as ok=False
+            # too — same rule, one implementation.
+            if (unreachable := _as_unreachable(exc)) is not None:
+                raise unreachable from exc
             return OpResult(ok=False, message=f"{label} failed: {exc}")
 
     # -- read / status -----------------------------------------------------
@@ -282,9 +288,18 @@ class RealDevicePort:
         reported "0 installed, 0 updated, 0 skipped" over a sync that removed
         presets from the device. ``delete_skipped`` is the engine *refusing* a
         delete (a live setlist still references the preset) and it is NOT
-        appended to ``errors``, so folding only ``errors`` reported success
-        while the tone stayed on the device — the same "success over an engine
-        refusal" class the IR verbs were fixed for."""
+        appended to ``errors``, so dropping it entirely hid from the user that
+        an unsynced tone is still on the device.
+
+        ``delete_skipped`` is reported but does NOT fail the op. The engine
+        builds its delete candidates from the WHOLE manifest (every tone with
+        ``slot=None`` and prior-placement evidence), never from the setlists
+        this call targets — and it excludes anything in the target union, so a
+        refused name is by construction some OTHER tone. Failing on it made one
+        unsynced-but-still-referenced tone turn every later sync, of every
+        setlist, permanently red for a reason unrelated to what the user asked
+        for, with nothing in the app able to clear it. ``ok`` stays driven by
+        ``errors`` — the buckets the engine attributes to this call."""
         pool = report.get("pool") or {}
         installed = len(pool.get("installed") or [])
         updated = len(pool.get("updated") or [])
@@ -308,7 +323,7 @@ class RealDevicePort:
                 " — still on the device, a live setlist references them: "
                 + ", ".join(refused)
             )
-        return OpResult(ok=failed == 0 and not refused, message=f"{label} — {summary}")
+        return OpResult(ok=failed == 0, message=f"{label} — {summary}")
 
     def _sync(self, setlists: list[str] | None, gc: bool, label: str) -> OpResult:
         def _run() -> OpResult:
@@ -362,6 +377,13 @@ class RealDevicePort:
             for s in manifest.setlists()
             if manifest.is_synced(s)
         ) or ("(no synced setlists to sync)",)
+        # The confirm also runs the managed-set mirror deletes, whose candidates
+        # come from the whole manifest rather than the setlists listed above —
+        # so with no synced setlists at all the preview read "(nothing to sync)"
+        # in front of a confirm that could still remove presets from the device.
+        # Which tones is not knowable offline (it needs prior-placement evidence
+        # plus the device's pool listing), so the confirm names the class.
+        lines = (*lines, "Also removes device presets for tones you have unsynced.")
         if gc:
             lines = (*lines, "GC: remove pool presets no setlist references")
         return MutationPlan(title="Sync all setlists to the device", lines=lines)
@@ -479,24 +501,20 @@ class RealDevicePort:
         through ``DeviceService.query``, which reports the failure and never
         opens the modal. Swallowing it offered a confirmable prune with no
         preview of what the confirm would delete."""
-        from helixgen.device import HelixError, maintenance
+        from helixgen.device import maintenance
 
         ip = self._resolve_ip()
         try:
             report = maintenance.ir_prune(ip=ip, port=self._port, execute=False)
-        except HelixError as exc:
+        except Exception as exc:
             # This half runs FIRST, and ir_prune connects itself (no _session):
             # without the split, a device off the LAN raises past DeviceService
-            # as a generic error and the header keeps claiming "connected".
-            if _is_connect_failure(exc):
-                raise DeviceUnreachable(str(exc)) from exc
-            raise
-        except OSError as exc:
-            # ir_prune's SFTP/socket half can surface an OSError the engine
-            # never wraps; every sibling path treats a TRANSPORT one as offline
-            # and lets a local-disk one (its manifest reads) fail as itself.
-            if _is_transport_oserror(exc):
-                raise DeviceUnreachable(str(exc)) from exc
+            # as a generic error and the header keeps claiming "connected". Its
+            # SFTP/socket half can also surface an OSError the engine never
+            # wraps, so the same errno split applies — a local-disk one (its
+            # manifest reads) still fails as itself.
+            if (unreachable := _as_unreachable(exc)) is not None:
+                raise unreachable from exc
             raise
         # The dry-run report is ``{ok, dry_run, device_irs, referenced,
         # protected, orphans, deleted, warnings, errors}`` — the delete

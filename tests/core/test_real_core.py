@@ -291,11 +291,16 @@ def test_sync_reports_the_mirror_deletes_it_performed(tmp_home, monkeypatch):
     assert "2 deleted" in result.message
 
 
-def test_sync_fails_when_the_engine_refuses_a_mirror_delete(tmp_home, monkeypatch):
+def test_sync_reports_a_refused_mirror_delete_without_failing_the_sync(tmp_home, monkeypatch):
     """``pool.delete_skipped`` is the engine REFUSING a delete (a live setlist
     still references the preset) and it is never appended to ``errors`` — so
-    folding only ``errors`` reported ok=True while the tone stayed on the
-    device. Same class as the IR verbs' "success over a refusal"."""
+    dropping it hid from the user that an unsynced tone is still on the device.
+
+    It must NOT fail the op, though. The engine builds delete candidates from
+    the whole manifest and excludes everything in the target union, so a
+    refused name is always some OTHER tone than the one being synced: failing
+    on it turned every later sync of every setlist permanently red, for a
+    reason unrelated to the request and with no way in the app to clear it."""
     from helixgen.device import setlist_sync
 
     monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
@@ -303,7 +308,14 @@ def test_sync_fails_when_the_engine_refuses_a_mirror_delete(tmp_home, monkeypatc
     monkeypatch.setattr(setlist_sync, "sync_setlists", lambda *a, **k: report)
 
     result = build_core().device.sync_all(gc=False)
-    assert result.ok is False, report
+    assert result.ok is True, report
+    assert "Still Referenced" in result.message
+
+    # ...and a genuine per-tone failure in the SAME report still fails it.
+    report = _canned_report(delete_skipped=["Still Referenced"], errors=["tone 'Riff': timeout"])
+    monkeypatch.setattr(setlist_sync, "sync_setlists", lambda *a, **k: report)
+    result = build_core().device.sync_all(gc=False)
+    assert result.ok is False
     assert "Still Referenced" in result.message
 
 
@@ -324,6 +336,17 @@ def test_sync_failures_name_what_failed_not_just_how_many(tmp_home, monkeypatch)
     assert "slot 3B occupied" in result.message
 
 
+def _engine_body(fn) -> str:
+    """The engine function's source with its DOCSTRING REMOVED.
+
+    ``inspect.getsource`` includes the docstring, so a bare ``"<key>" in
+    source`` still matches a key that survives only in the engine's prose —
+    exactly the docstring-pin failure mode these tests exist to avoid, just one
+    level less obvious."""
+    source = inspect.getsource(fn)
+    return source.replace(fn.__doc__, "") if fn.__doc__ else source
+
+
 def test_sync_report_keys_the_port_reads_are_the_engine_s():
     """Every ``pool`` bucket the fold reads is pinned to the installed engine's
     SOURCE, not its docstring — a renamed bucket must break the test that folds
@@ -331,7 +354,7 @@ def test_sync_report_keys_the_port_reads_are_the_engine_s():
     reported a no-op (resp. a success) over a real device mutation."""
     from helixgen.device import setlist_sync
 
-    source = inspect.getsource(setlist_sync.sync_setlists)
+    source = _engine_body(setlist_sync.sync_setlists)
     missing = [
         key
         for key in ("installed", "updated", "skipped", "deleted", "delete_skipped")
@@ -714,7 +737,7 @@ def test_maintenance_report_keys_the_port_reads_are_the_engine_s(verb, keys):
     its prose."""
     from helixgen.device import maintenance
 
-    source = inspect.getsource(getattr(maintenance, verb))
+    source = _engine_body(getattr(maintenance, verb))
     assert [k for k in keys if f'"{k}"' not in source and f"'{k}'" not in source] == []
 
 
@@ -723,7 +746,7 @@ def test_upload_missing_irs_report_keys_push_ir_reads_are_the_engine_s():
     silently reinstates the "reported success over a refusal" class."""
     from helixgen.device import ir_upload
 
-    source = inspect.getsource(ir_upload.upload_missing_irs)
+    source = _engine_body(ir_upload.upload_missing_irs)
     assert [k for k in ("ok", "note") if f'"{k}"' not in source and f"'{k}'" not in source] == []
 
 
@@ -855,6 +878,33 @@ def test_transport_oserror_from_a_mutation_still_flips_the_app_offline(tmp_home,
         build_core().device.backup()
 
 
+def test_sync_applies_the_errno_split_without_going_through_session(tmp_home, monkeypatch):
+    """``sync``/``push_ir``/``prune_irs`` connect themselves, so their OSErrors
+    reach ``_op`` and never ``_session``. Every other OSError test drives
+    ``backup()``, whose failure is classified inside ``_session`` — so ``_op``'s
+    own copy of the split was reachable only by the three verbs no test covered,
+    and could be deleted outright with the suite still green."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(code):
+        def _raise(*a, **k):
+            raise OSError(code, os.strerror(code))
+
+        return _raise
+
+    monkeypatch.setattr(setlist_sync, "sync_setlists", boom(errno.EHOSTUNREACH))
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.sync_all(gc=False)
+
+    # ...and the local-disk half still fails soft with the real cause.
+    monkeypatch.setattr(setlist_sync, "sync_setlists", boom(errno.ENOSPC))
+    result = build_core().device.sync_all(gc=False)
+    assert result.ok is False
+    assert os.strerror(errno.ENOSPC) in result.message
+
+
 def _connectable_client(monkeypatch, **methods):
     """Replace ``HelixClient`` with a stub that connects. Keeps the port's REAL
     ``_session`` in the path — the mapping under test lives there. Extra
@@ -918,19 +968,104 @@ def test_delete_ir_connect_failure_still_flips_the_app_offline(tmp_home, monkeyp
 
 
 @pytest.mark.parametrize(
-    "verb, listing",
-    [("_pool_cid_for", "list_presets"), ("list_device_irs", "list_irs")],
+    "listing, call",
+    [
+        ("list_presets", lambda device: device.make_active("Crunch")),
+        ("list_irs", lambda device: device.list_device_irs()),
+    ],
 )
-def test_port_listings_are_strict(verb, listing):
+def test_port_listings_are_strict(tmp_home, monkeypatch, listing, call):
     """Both listings the port reads default to ``strict=False``, which reads a
     timeout or a truncated reply as an empty/partial list. ``_pool_cid_for``
     turns a missing row into the definitive claim "'X' is not on the device",
     and ``list_device_irs`` renders the pane the user pushes to and deletes
-    from — neither may silently under-report. Pinned as source rather than
-    behavior because the default is the engine's, so a port that simply drops
-    the keyword reads as working."""
-    source = inspect.getsource(getattr(RealDevicePort, verb))
-    assert f"{listing}(strict=True)" in source
+    from — neither may silently under-report.
+
+    Asserts the kwarg the port actually sends, defaulted exactly as the engine
+    defaults it: an earlier source-grep for the literal ``list_irs(strict=True)``
+    stayed green when the keyword was dropped and the text left in a comment."""
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    seen: list[bool] = []
+
+    def _record(*args, strict=False, **kwargs):
+        seen.append(strict)
+        return []
+
+    _connectable_client(monkeypatch, **{listing: _record})
+    call(build_core().device)
+    assert seen == [True], f"{listing} must be strict — a truncated reply is not 'empty'"
+
+
+def test_list_device_irs_maps_rows_to_view_models(tmp_home, monkeypatch):
+    """The device IR pane's only offline coverage: engine rows -> IrVM, with
+    ``on_device`` set and a missing name degrading to "" rather than None (the
+    table renders it directly)."""
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    rows = [{"name": "Old Cab", "hash": "abc123"}, {"hash": "def456"}]
+    _connectable_client(monkeypatch, list_irs=lambda **k: rows)
+
+    irs = build_core().device.list_device_irs()
+    assert [(ir.name, ir.irhash, ir.on_device, ir.pack) for ir in irs] == [
+        ("Old Cab", "abc123", True, None),
+        ("", "def456", True, None),
+    ]
+
+
+def test_make_active_reports_a_tone_the_device_does_not_have(tmp_home, monkeypatch):
+    """``_pool_cid_for`` finding no row is a definitive claim, not a crash —
+    and ``load_preset`` must not be called on a cid we never resolved."""
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    loaded = []
+    _connectable_client(
+        monkeypatch,
+        list_presets=lambda **k: [{"name": "Crunch", "cid_": 7}],
+        load_preset=lambda cid: loaded.append(cid) or True,
+    )
+
+    device = build_core().device
+    missing = device.make_active("Nope")
+    assert (missing.ok, missing.message) == (False, "'Nope' is not on the device")
+    assert loaded == []
+
+    found = device.make_active("Crunch")
+    assert (found.ok, found.message) == (True, "made 'Crunch' active")
+    assert loaded == [7]
+
+
+def test_make_active_fails_when_the_device_refuses_the_load(tmp_home, monkeypatch):
+    """``load_preset`` returning falsy is the engine refusing — folded like
+    every other report, never hardcoded ok=True."""
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(
+        monkeypatch,
+        list_presets=lambda **k: [{"name": "Crunch", "cid_": 7}],
+        load_preset=lambda cid: False,
+    )
+    result = build_core().device.make_active("Crunch")
+    assert (result.ok, result.message) == (False, "could not activate 'Crunch'")
+
+
+def test_rename_ir_fails_when_the_match_carries_no_cid(tmp_home, monkeypatch):
+    """``resolve_device_ir_live`` can return a match with no ``cid_``; renaming
+    on that would address nothing, so the guard must report rather than pass
+    None to ``client.rename``."""
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    renamed = []
+    _connectable_client(
+        monkeypatch, rename=lambda cid, name: renamed.append((cid, name)) or True
+    )
+    monkeypatch.setattr(maintenance, "resolve_device_ir_live", lambda c, n: {})
+
+    result = build_core().device.rename_ir("Old Cab", "New Cab")
+    assert (result.ok, result.message) == (False, "could not rename 'Old Cab'")
+    assert renamed == []
+
+    monkeypatch.setattr(maintenance, "resolve_device_ir_live", lambda c, n: {"cid_": 12})
+    result = build_core().device.rename_ir("Old Cab", "New Cab")
+    assert (result.ok, result.message) == (True, "renamed IR to 'New Cab'")
+    assert renamed == [(12, "New Cab")]
 
 
 def test_list_device_irs_strict_failure_reports_instead_of_going_offline(tmp_home, monkeypatch):
@@ -1008,3 +1143,24 @@ def test_plan_sync_all_lists_only_the_setlists_sync_all_will_touch(tmp_home, mon
     plan = build_core().device.plan_sync_all(gc=False)
     assert any(line.startswith("Gig 1 (") for line in plan.lines), plan.lines
     assert not any(line.startswith("Draft (") for line in plan.lines), plan.lines
+
+
+def test_plan_sync_all_warns_that_the_confirm_also_deletes(tmp_home, monkeypatch):
+    """The confirm runs the managed-set mirror deletes too, and the engine
+    builds those candidates from the WHOLE manifest — independently of the
+    setlists listed above. With nothing synced the preview read "(no synced
+    setlists to sync)" in front of a confirm that could still remove presets
+    from the device: a destructive confirm whose preview promised a no-op."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    src = inspect.getsource(setlist_sync.sync_setlists)
+    assert "delete_candidates" in src and "manifest.tones.items()" in src, (
+        "engine's mirror-delete candidate set is no longer manifest-wide"
+    )
+
+    plan = build_core().device.plan_sync_all(gc=False)
+    assert plan.lines == (
+        "(no synced setlists to sync)",
+        "Also removes device presets for tones you have unsynced.",
+    ), plan.lines
