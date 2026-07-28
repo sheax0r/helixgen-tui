@@ -446,3 +446,35 @@ device with no IRs (both sides empty), and `tests/live/conftest.py`'s
 must agree (the root guard excludes exactly the root the live suite writes to)
 and nothing enforces it. A shared `tests/support.py` would retire both those
 constants and `test_boundaries.py`'s by-path `_load_conftest` importer.
+
+## 28. Prune is unreachable in the app and unverified on hardware (review finding, 2026-07-27)
+
+Two halves of the same gap, both left by the live-suite branch:
+
+- **In the app, `P` can be permanently unreachable.** `plan_prune_irs` raises on
+  *any* entry in `ir_prune`'s `warnings` — correct, because
+  `ir_prune(execute=True)` refuses over unverifiable local IR references and the
+  port deliberately never passes `ignore_warnings` (that would be failing open
+  on a destructive verb). But a warning comes from
+  `local_referenced_ir_hashes`: **one** library tone whose recorded `.hsp` is
+  missing or unreadable produces one, permanently, whether or not the device has
+  any orphans at all. That is the state of the device used for the hardware run,
+  so on a real library the prune modal simply never opens again. The footer says
+  the prune "would refuse to execute"; the TUI offers no way out. Work when
+  picked up: surface the unverifiable tones as an actionable list (they are a
+  fixable library problem — a re-register or a delete), and only then consider a
+  second explicit consent. README's known-issues section documents the refusal
+  but pointed at no tracked follow-up.
+- **`prune_irs(execute=True)` has no hardware coverage and cannot get any on
+  this device.** `test_prune_irs_executes_only_against_hgtest_orphans` skips
+  whenever the device holds any non-`HGTEST` orphan — the recorded final run is
+  `20 passed, 1 skipped` for exactly that reason, and it is a *permanent*
+  property of that device, not a transient state. So the one verb whose report
+  fold this branch rewrote is validated by monkeypatched dicts only, which is
+  the gap the suite exists to close ("a signature match cannot catch a renamed
+  keyword, a changed return shape"). `plan_prune_irs`'s CLI cross-check in
+  `test_read_verbs.py` skips on the same device state, so the destructive path
+  has no hardware evidence at all. Fix: make the gate satisfiable rather than
+  device-dependent — the engine's `ir_prune(only=...)` narrows to given hashes
+  and still refuses referenced ones, so a test-only call could prune exactly the
+  suite's own `HGTEST` orphan on any device.

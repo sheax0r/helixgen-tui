@@ -173,7 +173,14 @@ class IrsScreen(LibrarianScreen):
             with Vertical():
                 yield Static("Device IRs")
                 yield DataTable(id=_DEVICE_TABLE_ID, cursor_type="row")
-                yield Static(_DEVICE_PLACEHOLDER_TEXT, id=_DEVICE_PLACEHOLDER_ID)
+                # markup=False: this used to hold one fixed literal, but the
+                # soft-failure branch below now writes arbitrary engine text
+                # into it — a stray "[/]" in a HelixError message would raise
+                # MarkupError out of the render pipeline, and "[word]" would be
+                # silently stripped from the diagnostic (backlog #12's class).
+                yield Static(
+                    _DEVICE_PLACEHOLDER_TEXT, id=_DEVICE_PLACEHOLDER_ID, markup=False
+                )
         yield Input(placeholder="rename IR", id=_RENAME_INPUT_ID)
 
     def on_mount(self) -> None:

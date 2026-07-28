@@ -89,7 +89,9 @@ user never sees or types.
 > device delete-ir <hash> --force-wedge --yes` (the TUI does not offer the
 > forced delete). And prune (`P`) refuses in the status bar, without opening a
 > confirm, whenever the engine can't verify some local tones' IR references —
-> a confirm it could only fail is worse than no confirm.
+> a confirm it could only fail is worse than no confirm. One library tone with a
+> missing `.hsp` is enough to refuse every prune from then on, and the TUI offers
+> no way to fix it from inside the app; tracked in `docs/BACKLOG.md` #28.
 >
 > Also known: long device operations — *sync all* and *prune* especially — can
 > report `timed out` in the status bar after ~5s while the operation is still

@@ -297,12 +297,17 @@ def test_make_active_roundtrip(real_port, helix, cli, scratch, amp_blocks):
     if not free:
         pytest.skip("no empty user slot for the make_active preset")
 
-    code, out, err = helix("device", "install", hsp, tone, "--pos", free[0])
-    assert code == 0, f"device install failed: {err or out}"
-    m = CID_RE.search(out)
-    assert m, f"no cid in install output: {out!r}"
-    cid = int(m.group(1))
+    # install INSIDE the try: it and the cid parse both used to sit outside it,
+    # so a reworded install message left the HGTEST preset on the device with
+    # no finalizer to drop it (the state guard fails the run but never cleans).
+    cid = None
     try:
+        code, out, err = helix("device", "install", hsp, tone, "--pos", free[0])
+        assert code == 0, f"device install failed: {err or out}"
+        m = CID_RE.search(out)
+        assert m, f"no cid in install output: {out!r}"
+        cid = int(m.group(1))
+
         res = real_port.make_active(tone)
         _assert_op(res, True, f"made {tone!r} active")
         assert _active(helix).get("name") == tone
@@ -320,12 +325,22 @@ def test_make_active_roundtrip(real_port, helix, cli, scratch, amp_blocks):
                 f"\n[tests/live] WARNING: could not restore active preset "
                 f"cid {before['cid']}: {(err or out).strip()}"
             )
-        code, out, err = helix("device", "delete", cid, "--yes")
-        if code != 0:
-            print(
-                f"\n[tests/live] WARNING: could not delete HGTEST preset "
-                f"cid {cid}: {(err or out).strip()}"
-            )
+        if cid is None:
+            # the install may have landed even though its cid never got parsed
+            # — resolve by name rather than leaking the preset onto the device
+            code, out, err = helix("device", "list", "--json")
+            if code == 0:
+                cid = next(
+                    (m.get("cid_") for m in json.loads(out) if m.get("name") == tone),
+                    None,
+                )
+        if cid is not None:
+            code, out, err = helix("device", "delete", cid, "--yes")
+            if code != 0:
+                print(
+                    f"\n[tests/live] WARNING: could not delete HGTEST preset "
+                    f"cid {cid}: {(err or out).strip()}"
+                )
     assert _active(helix).get("cid") == before["cid"]
 
 

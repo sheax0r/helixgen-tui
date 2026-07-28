@@ -827,3 +827,23 @@ async def test_a_reachable_device_read_failure_shows_the_engine_message():
         text = str(screen.query_one("#irs-device-placeholder").render())
         assert "incomplete IR listing" in text
         assert "device offline" not in text
+
+
+async def test_device_read_failure_message_with_markup_renders_verbatim():
+    """That message is arbitrary engine text now, so the placeholder needs the
+    same markup=False guard the device screen's Statics carry: a stray "[/]"
+    raises MarkupError out of the render pipeline, and "[word]" is silently
+    stripped from the diagnostic (backlog #12's class)."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        screen = app.screen
+
+        screen._apply_device_irs(
+            QueryResult(ok=False, value=None, message="IR 'Cab [reverb] v2' failed [/]")
+        )
+        await pilot.pause()
+
+        text = str(screen.query_one("#irs-device-placeholder").render())
+        assert "[reverb]" in text
+        assert "[/]" in text

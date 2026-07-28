@@ -29,7 +29,7 @@ themselves (``post_message``; see ``screens/library.py``'s
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from helixgen_tui.core.models import DeviceStateVM, OpResult
@@ -138,13 +138,16 @@ class DeviceService:
         except DeviceUnreachable:
             self._set_state(_OFFLINE)
             return
-        except Exception:  # noqa: BLE001 — a probe that raises IS "not usable"
+        except Exception as exc:  # noqa: BLE001 — a probe that raises IS "not usable"
             # The port only raises DeviceUnreachable for a connect-class
             # failure; anything else (a protocol fault on a reachable device)
             # would otherwise kill this daemon thread silently and freeze the
             # header on its last state forever. Offline is the honest report
-            # for a probe that couldn't complete, and the next poll retries.
-            self._set_state(_OFFLINE)
+            # for a probe that couldn't complete, and the next poll retries —
+            # but carry the reason into the footer's `detail`, or a persistent
+            # non-connect fault (or a bug in probe itself) is indistinguishable
+            # from a device that is simply off the LAN, with nothing logged.
+            self._set_state(replace(_OFFLINE, detail=f"probe failed: {exc}"))
             return
         self._set_state(state)
 

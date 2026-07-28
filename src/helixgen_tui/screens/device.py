@@ -176,7 +176,15 @@ class DeviceScreen(LibrarianScreen):
     def _apply_info(self, result: QueryResult) -> None:
         info_widget = self.query_one(f"#{_INFO_ID}", Static)
         if not result.ok or result.value is None:
-            info_widget.update(_OFFLINE_INFO)
+            # Say WHY, don't assume offline (same fix as screens/irs.py's device
+            # pane). A non-connect abort on a REACHABLE device — a timed-out
+            # /getProductInfo reply — fails soft with the engine's remediation
+            # text while the header stays "connected", so hardcoding "device
+            # offline" here contradicted the header and discarded the only copy
+            # of that text. The genuine offline case still reads exactly as
+            # before: _refresh_info's short-circuit passes "device offline".
+            failed_soft = result.message and result.message != "device offline"
+            info_widget.update(result.message if failed_soft else _OFFLINE_INFO)
             return
         info: dict = result.value  # type: ignore[assignment]
         state = self.app.device_service.state
@@ -203,7 +211,11 @@ class DeviceScreen(LibrarianScreen):
     def _apply_locks(self, result: QueryResult) -> None:
         locks_widget = self.query_one(f"#{_LOCKS_ID}", Static)
         if not result.ok or result.value is None:
-            locks_widget.update("")
+            # Same split as _apply_info: a soft failure on a reachable device
+            # says why (blanking the panel made `l` look like a dead key), the
+            # offline/empty case stays blank as _refresh_info renders it.
+            failed_soft = result.message and result.message != "device offline"
+            locks_widget.update(result.message if failed_soft else "")
             return
         locks = list(result.value)  # type: ignore[arg-type]
         locks_widget.update("\n".join(locks) if locks else "locks: none")

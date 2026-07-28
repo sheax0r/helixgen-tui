@@ -209,7 +209,9 @@ def test_push_ir_unknown_ir_is_soft_failure(tmp_home, monkeypatch):
 # --- Fix 2: sync summarizes the report's bucket counts ---------------------
 
 
-def _canned_report(*, installed=(), updated=(), skipped=(), errors=()):
+def _canned_report(
+    *, installed=(), updated=(), skipped=(), errors=(), deleted=(), delete_skipped=()
+):
     return {
         "ok": not errors,
         "setlists": [],
@@ -217,8 +219,8 @@ def _canned_report(*, installed=(), updated=(), skipped=(), errors=()):
             "installed": list(installed),
             "updated": list(updated),
             "skipped": list(skipped),
-            "deleted": [],
-            "delete_skipped": [],
+            "deleted": list(deleted),
+            "delete_skipped": list(delete_skipped),
         },
         "references": {},
         "gc": {"deleted": []},
@@ -253,6 +255,57 @@ def test_sync_all_failures_flip_ok_false_and_are_counted(tmp_home, monkeypatch):
     assert result.ok is False
     assert "1 failed" in result.message
     assert "1 skipped" in result.message
+
+
+def test_sync_reports_the_mirror_deletes_it_performed(tmp_home, monkeypatch):
+    """``pool.deleted`` is the ordinary "unsync a tone, then sync" outcome.
+    Dropping it reported "0 installed, 0 updated, 0 skipped, 0 failed" over a
+    sync that removed presets from the device — indistinguishable from a
+    no-op."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    report = _canned_report(deleted=["Old Tone", "Older Tone"])
+    monkeypatch.setattr(setlist_sync, "sync_setlists", lambda *a, **k: report)
+
+    result = build_core().device.sync_all(gc=False)
+    assert result.ok is True
+    assert "2 deleted" in result.message
+
+
+def test_sync_fails_when_the_engine_refuses_a_mirror_delete(tmp_home, monkeypatch):
+    """``pool.delete_skipped`` is the engine REFUSING a delete (a live setlist
+    still references the preset) and it is never appended to ``errors`` — so
+    folding only ``errors`` reported ok=True while the tone stayed on the
+    device. Same class as the IR verbs' "success over a refusal"."""
+    from helixgen.device import setlist_sync
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    report = _canned_report(delete_skipped=["Still Referenced"])
+    monkeypatch.setattr(setlist_sync, "sync_setlists", lambda *a, **k: report)
+
+    result = build_core().device.sync_all(gc=False)
+    assert result.ok is False, report
+    assert "Still Referenced" in result.message
+
+
+def test_sync_report_keys_the_port_reads_are_the_engine_s():
+    """Every ``pool`` bucket the fold reads is pinned to the installed engine's
+    SOURCE, not its docstring — a renamed bucket must break the test that folds
+    it, and `deleted`/`delete_skipped` are the two whose absence silently
+    reported a no-op (resp. a success) over a real device mutation."""
+    from helixgen.device import setlist_sync
+
+    source = inspect.getsource(setlist_sync.sync_setlists)
+    missing = [
+        key
+        for key in ("installed", "updated", "skipped", "deleted", "delete_skipped")
+        if f'"{key}"' not in source and f"'{key}'" not in source
+    ]
+    assert missing == [], missing
+    # ...and the refusal really is kept out of `errors`, which is why the fold
+    # cannot treat `errors` alone as "did anything fail".
+    assert 'result["pool"]["delete_skipped"].append' in source
 
 
 # --- Fix 3: sync_tone only mirrors setlists already opted into syncing ------

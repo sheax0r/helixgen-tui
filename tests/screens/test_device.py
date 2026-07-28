@@ -79,6 +79,39 @@ async def test_connected_info_rows_and_active_tone_render():
         assert "AC/DC - Back in Black" in info_text
 
 
+class _SoftFailReadPort(_InfoDevicePort):
+    """info()/lock_status() abort on a REACHABLE device — the non-connect
+    HelixError `real.py` deliberately re-raises as itself rather than flipping
+    the app offline."""
+
+    def info(self):
+        raise RuntimeError("no /getProductInfo reply from device")
+
+    def lock_status(self):
+        raise RuntimeError("lock listing truncated — retry")
+
+
+async def test_soft_read_failure_says_why_instead_of_claiming_offline():
+    """The panel used to hardcode "device offline — no info available" for every
+    failed read, contradicting a header that still said "connected" and
+    throwing away the only copy of the engine's remediation text."""
+    port = _SoftFailReadPort(state=_CONNECTED)
+    app = _device_app(port)
+    async with app.run_test() as pilot:
+        await pilot.press("4")
+        await pilot.pause()
+        info_text = str(app.screen.query_one("#device-info").render())
+        assert "getProductInfo" in info_text
+        assert "no info available" not in info_text
+        # a non-connect abort never flips the service offline, so the header
+        # must still read connected — the two can no longer disagree
+        assert "connected" in str(app.screen.query_one(StatusFooter).render())
+
+        await pilot.press("l")
+        await pilot.pause()
+        assert "truncated" in str(app.screen.query_one("#device-locks").render())
+
+
 async def test_backup_calls_port_and_footer_shows_result():
     port = _InfoDevicePort(state=_CONNECTED)
     app = _device_app(port)

@@ -270,22 +270,38 @@ class RealDevicePort:
     def _summarize_sync_report(report: dict, label: str) -> OpResult:
         """Fold ``setlist_sync.sync_setlists``'s report into an OpResult.
 
-        The report's shape (helixgen 0.26) is
-        ``{ok, pool:{installed,updated,skipped,...}, errors:[...], ...}`` with
-        per-tone install/update/IR failures accumulated in ``errors`` (``ok`` is
-        ``not errors``). We surface the four bucket counts the user cares about
-        and fail the op (``ok=False``) whenever anything failed — previously the
-        whole report was discarded and every sync reported a bare success."""
+        The report's shape is ``{ok, pool:{installed,updated,skipped,deleted,
+        delete_skipped}, errors:[...], ...}`` with per-tone install/update/IR
+        failures accumulated in ``errors`` (``ok`` is ``not errors``). We
+        surface every bucket count and fail the op (``ok=False``) whenever
+        anything failed — previously the whole report was discarded and every
+        sync reported a bare success.
+
+        Two buckets are not decoration. ``deleted`` is the managed-set mirror
+        delete — the ordinary "unsync a tone, then sync" flow — so dropping it
+        reported "0 installed, 0 updated, 0 skipped" over a sync that removed
+        presets from the device. ``delete_skipped`` is the engine *refusing* a
+        delete (a live setlist still references the preset) and it is NOT
+        appended to ``errors``, so folding only ``errors`` reported success
+        while the tone stayed on the device — the same "success over an engine
+        refusal" class the IR verbs were fixed for."""
         pool = report.get("pool") or {}
         installed = len(pool.get("installed") or [])
         updated = len(pool.get("updated") or [])
         skipped = len(pool.get("skipped") or [])
+        deleted = len(pool.get("deleted") or [])
+        refused = [str(n) for n in (pool.get("delete_skipped") or [])]
         failed = len(report.get("errors") or [])
         summary = (
-            f"{installed} installed, {updated} updated, "
+            f"{installed} installed, {updated} updated, {deleted} deleted, "
             f"{skipped} skipped, {failed} failed"
         )
-        return OpResult(ok=failed == 0, message=f"{label} — {summary}")
+        if refused:
+            summary += (
+                " — still on the device, a live setlist references them: "
+                + ", ".join(refused)
+            )
+        return OpResult(ok=failed == 0 and not refused, message=f"{label} — {summary}")
 
     def _sync(self, setlists: list[str] | None, gc: bool, label: str) -> OpResult:
         def _run() -> OpResult:

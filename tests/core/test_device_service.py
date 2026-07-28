@@ -49,6 +49,23 @@ def test_probe_unreachable_reports_offline_state():
     assert svc.state.status == "offline"
 
 
+def test_probe_non_connect_failure_reports_offline_with_the_reason():
+    """A probe raising anything other than DeviceUnreachable (a protocol fault
+    on a reachable device, or a bug in the port itself) must not silently kill
+    the poller thread — but it must also not present as a bare "offline",
+    indistinguishable from a device that is simply off the LAN. The reason
+    rides `detail`, which the footer renders."""
+
+    class _BrokenProbePort(FakeDevicePort):
+        def probe(self):
+            raise TypeError("probe() got an unexpected keyword argument 'strict'")
+
+    svc, states = _service(_BrokenProbePort(state=_CONNECTED))
+    svc.retry_now()
+    assert states[-1].status == "offline"
+    assert "unexpected keyword argument" in states[-1].detail
+
+
 def test_run_while_offline_short_circuits_without_touching_port():
     port = FakeDevicePort()  # default offline state
     svc, _ = _service(port)

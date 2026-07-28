@@ -10,16 +10,6 @@ import pytest
 from helixgen.home import helixgen_home
 from helixgen.locks import locks_root
 
-_HELIXGEN_ENV_VARS = (
-    "HELIXGEN_HOME",
-    "HELIXGEN_LIBRARY",
-    "HELIXGEN_SETLISTS",
-    "HELIXGEN_CACHE",
-    "HELIXGEN_PREFS",
-    "HELIXGEN_LOCKS",
-    "HELIXGEN_IRS",
-)
-
 
 @pytest.fixture
 def tmp_home(tmp_path, monkeypatch):
