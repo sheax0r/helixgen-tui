@@ -4,10 +4,11 @@ the real one ($HELIXGEN_HOME, else ~/.helixgen) is never touched by the suite.
 
 from __future__ import annotations
 
-import os
 import pathlib
 
 import pytest
+from helixgen.home import helixgen_home
+from helixgen.locks import locks_root
 
 _HELIXGEN_ENV_VARS = (
     "HELIXGEN_HOME",
@@ -42,23 +43,15 @@ def tmp_home(tmp_path, monkeypatch):
     return home
 
 
-#: The developer's REAL helixgen home, resolved ONCE at import — i.e. before
-#: any fixture redirects ``$HELIXGEN_HOME`` (``tmp_home`` per test, the live
-#: suite's ``_live_env`` per session). ``$HELIXGEN_HOME`` wins, the same way the
-#: engine resolves it: hardcoding ``~/.helixgen`` on a machine with a custom
-#: home would snapshot an unrelated directory, so ``before == after`` would hold
-#: trivially and the guard would be silently inert.
-REAL_HELIXGEN_HOME = pathlib.Path(
-    os.environ.get("HELIXGEN_HOME") or pathlib.Path.home() / ".helixgen"
-).expanduser()
-
-#: The real lease root, resolved with the engine's OWN precedence
-#: (``helixgen.locks.locks_root``): ``$HELIXGEN_LOCKS`` WINS over the
-#: ``$HELIXGEN_HOME``-derived default. Deriving it from the home alone would
-#: exclude the wrong subtree on a machine with a custom lock root.
-REAL_LOCKS_ROOT = pathlib.Path(
-    os.environ.get("HELIXGEN_LOCKS") or REAL_HELIXGEN_HOME / "locks"
-).expanduser()
+#: The developer's REAL helixgen home and lease root, resolved by the ENGINE's
+#: own functions ONCE at import — i.e. before any fixture redirects
+#: ``$HELIXGEN_HOME`` (``tmp_home`` per test, the live suite's ``_live_env`` per
+#: session). Re-deriving the precedence here (``$HELIXGEN_HOME``, and
+#: ``$HELIXGEN_LOCKS`` winning over ``<home>/locks``) is free to drift from the
+#: engine, and a wrong root snapshots an unrelated directory: ``before ==
+#: after`` then holds trivially and the guard is silently inert.
+REAL_HELIXGEN_HOME = helixgen_home()
+REAL_LOCKS_ROOT = locks_root()
 
 
 def _snapshot_real_home(

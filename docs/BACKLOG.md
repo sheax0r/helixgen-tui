@@ -387,6 +387,15 @@ the `tests/live/` branch:
   `tests/conftest.py`'s session guard that non-live tests see no device IP.
 - `DEVICE_IP` is resolved at import on every default run and printed into the
   `-ra` skip reason, so the LAN address shows up in local/CI test output.
+- The IR roundtrip drives `delete_ir`/`rename_ir` with an irhash, but
+  `screens/irs.py` passes `IrVM.name` — so `resolve_device_ir_live`'s
+  name-resolution path (the only one the app takes, including the
+  ambiguous-duplicate-name case in section 9) is never exercised on hardware.
+- Cosmetics left alone: `helix` is a pass-through alias for `cli`;
+  `test_safety_chain_up` restates what the `device_backup` fixture already
+  asserted; `test_probe_unconfigured_raises_without_socket` still patches the
+  stdlib `socket` its own docstring calls inert; `_write_test_wav` builds a
+  seeded decay envelope where two distinct bytes would do.
 
 ## 26. `DeviceService`'s 5s timeout is shorter than the device verbs it guards (review finding, 2026-07-27)
 

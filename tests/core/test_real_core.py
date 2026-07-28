@@ -542,3 +542,125 @@ def test_delete_ir_reports_the_engine_refusal(tmp_home, monkeypatch):
     result = build_core().device.delete_ir("Old Cab")
     assert result.ok is True
     assert "backing file left on the device" in result.message
+
+
+# --- Fix 5: connect-class vs healthy-device-abort classification -------------
+
+
+def test_connect_failure_markers_still_exist_in_the_installed_engine():
+    """``_CONNECT_FAILURES`` is a hardcoded copy of the engine's connect-class
+    messages. Pin it to the installed ``HelixClient``: if helixgen rewords one,
+    every real connect/drop stops flipping the app offline and the header keeps
+    claiming "connected" over a device that is gone — silently, because a test
+    raising its own copy of the string would still pass."""
+    from helixgen.device.client import HelixClient
+
+    from helixgen_tui.core.real import _CONNECT_FAILURES
+
+    source = inspect.getsource(HelixClient)
+    assert [m for m in _CONNECT_FAILURES if m not in source] == []
+
+
+def test_ir_prune_report_keys_the_port_reads_are_the_engine_s():
+    """The bug this branch exists to fix was reading ``prunable``/``prune``,
+    keys ``ir_prune`` never emitted. Pin the keys the port DOES read to the
+    engine's documented return shape."""
+    from helixgen.device import maintenance
+
+    doc = inspect.getdoc(maintenance.ir_prune) or ""
+    assert [k for k in ("orphans", "deleted", "warnings", "errors") if k not in doc] == []
+
+
+def test_prune_irs_mid_operation_drop_flips_the_app_offline(tmp_home, monkeypatch):
+    """``ir_prune`` runs two full strict scans, so the LIKELIEST connect-class
+    failure is not the initial connect but a drop mid-RPC — a different engine
+    message. Classifying only ``connect``'s message left that reported as a
+    healthy-device abort with the header still showing "connected"."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise HelixError(
+            "device connection lost after 3 reconnect attempts; if this "
+            "persists, reboot the Helix"
+        )
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.prune_irs()
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.plan_prune_irs()
+
+
+def test_plan_prune_irs_oserror_flips_the_app_offline(tmp_home, monkeypatch):
+    """Every sibling path maps an OSError to offline; this half caught only
+    HelixError, so a socket error reached DeviceService.query as a generic
+    failure and left the header claiming "connected"."""
+    from helixgen.device import maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise OSError("[Errno 65] No route to host")
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.plan_prune_irs()
+
+
+def _connectable_client(monkeypatch):
+    """Replace ``HelixClient`` with a stub that connects. Keeps the port's REAL
+    ``_session`` in the path — the mapping under test lives there."""
+    import helixgen.device as device_pkg
+
+    class _Client:
+        def __init__(self, ip, port=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(device_pkg, "HelixClient", _Client)
+
+
+def test_delete_ir_strict_listing_failure_is_not_reported_as_offline(tmp_home, monkeypatch):
+    """``delete_device_ir`` resolves through ``resolve_device_ir_live``, whose
+    ``-11`` listing is strict: a truncated/timed-out reply raises HelixError
+    from a perfectly REACHABLE device. ``_session`` maps every HelixError to
+    DeviceUnreachable, which flipped the whole app offline and threw the
+    engine's remediation text away — the same asymmetry prune was fixed for."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(monkeypatch)
+
+    def boom(client, name, ip=None):
+        raise HelixError(
+            "no reply listing container -11 (timeout or connection drop); "
+            "refusing to treat it as empty — retry"
+        )
+
+    monkeypatch.setattr(maintenance, "delete_device_ir", boom)
+    result = build_core().device.delete_ir("Old Cab")
+    assert result.ok is False
+    assert "refusing to treat it as empty" in result.message
+
+
+def test_delete_ir_connect_failure_still_flips_the_app_offline(tmp_home, monkeypatch):
+    """The other half of the split: a device that really is gone must still
+    take the app offline rather than fail soft in the footer."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+    _connectable_client(monkeypatch)
+
+    def boom(client, name, ip=None):
+        raise HelixError("no Helix Stadium answered at 10.255.255.1:2002")
+
+    monkeypatch.setattr(maintenance, "delete_device_ir", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.delete_ir("Old Cab")

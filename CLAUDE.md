@@ -16,6 +16,7 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
 - **Device writes are real.** Same write-gating mentality as core's CLI: reads free; anything mutating device (sync, install, delete, live ops) must be explicit, visible user action in UI — never side effect of navigation. Stadium network stack flaky: surface retry affordances, don't hang UI on dropped frame.
 - **Searching is never a write.** `enter` in a filter input acts on the highlighted row — which filtering has already parked on the best match — and stops there — activate/sync/push/delete/rename keep their own keys. Only a picker whose whole purpose is committing a choice (`AddToneModal`) acts on `enter`, and then only against local state. New filterable surfaces inherit this: `FilterableTableMixin.filter_on_enter` defaults to `move_cursor_to`, so overriding it is the deliberate act.
 - **Real-port verbs fold the engine's report; they never hardcode `ok=True`.** helixgen's device layer signals per-item failure *inside* the returned dict (`ok`, `errors`, `warnings`, `note`, `file_removed`) and raises only for transport faults — four verbs in `core/real.py` shipped reporting success over engine refusals for exactly this reason (2026-07-27, spec `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`). New verbs assert the report shape against the installed engine in an offline unit test. A `plan_*` feeding a destructive `ConfirmModal` **raises** on any condition the confirm couldn't survive — `DeviceService.query` reports it and the modal never opens; returning the reason as plan text offers a confirmable delete that can only fail.
+- **Only a connect-class `HelixError` means the device is gone** (`_CONNECT_FAILURES` in `core/real.py`). Everything else the engine raises — a strict listing on a truncated reply, a dangling setlist reference, the prune confirm re-scan disagreeing — is an abort on a *reachable* device and must fail soft with the engine's remediation text, not flip the whole app offline. The connect messages are a closed set; the aborts are not, so classify on the former. They are string matches against the installed `HelixClient` (the engine has one exception class), so an offline test pins every marker to `inspect.getsource(HelixClient)` — a test raising its own copy of the string proves nothing.
 - **List surfaces resolve selection through `FilterableTableMixin.selected()`** (`src/helixgen_tui/screens/filterable.py`) — never by parsing a row key back into a backing index. The mixin's `_visible` is the only valid cursor→item mapping; once rows are filtered or re-ranked, table position and backing position diverge. Row keys stay positional where display names duplicate (the IR panes) purely because `DataTable` rejects repeats — they carry no meaning, which is also why `rebuild_filtered` restores the cursor by *item*, not by key.
 
 ## Open decisions (settle in the design spec, not in code)
@@ -44,7 +45,12 @@ Terminal UI for helixgen: manage tone library, setlists, Line 6 Helix Stadium ov
   session-failing device state guard, `HGTEST`-prefixed artifacts only, session
   `all` advisory lease held for the run. Normative details + exclusions
   (`restore`, `sync_all(gc=True)`): `tests/live/conftest.py` docstring; findings:
-  `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
+  `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`. Recovery, both
+  non-obvious: a SIGKILL'd run leaves the machine's REAL `all` lease held for up
+  to its 1800s TTL, blocking every other helixgen process — clear it with
+  `helixgen device unlock --force`. A `~/.helixgen changed during the test
+  session` failure can be another helixgen process rather than a suite leak;
+  tell them apart by re-running under `HELIXGEN_HOME=$(mktemp -d) uv run pytest`.
 - **Never commit paid IR packs or personal device exports** (user rule from core; applies here if fixtures ever creep in).
 
 ## ralphex

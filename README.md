@@ -81,6 +81,15 @@ user never sees or types.
 > they await core-side verbs (a restore that carries its target preset, and a
 > single-pool-preset delete). The UI surfaces a clear reason until then. See
 > `docs/BACKLOG.md` #6.
+>
+> Two device-IR verbs can report something short of a clean success, both by
+> design: deleting an IR (`d`) can half-succeed — the Helix removes the registry
+> entry but leaves the backing file behind, reported as *"registry entry
+> removed; backing file left on the device"*; clean that up with `helixgen
+> device delete-ir <hash> --force-wedge --yes` (the TUI does not offer the
+> forced delete). And prune (`P`) refuses in the status bar, without opening a
+> confirm, whenever the engine can't verify some local tones' IR references —
+> a confirm it could only fail is worse than no confirm.
 
 The long-term goal is full parity with the Helix Stadium desktop app
 (tracked in helixgen-core's `docs/stadium-app-parity.md`); this v1 ships the
@@ -91,8 +100,10 @@ settings, tuner/meters) to follow. See `docs/BACKLOG.md`.
 ## Development
 
 Managed with [uv](https://docs.astral.sh/uv/); the package layout is
-`src/helixgen_tui/`, depending on `helixgen[device]` from PyPI (never vendor
-core source here).
+`src/helixgen_tui/`, depending on `helixgen[device]>=0.31` from PyPI (never
+vendor core source here). The `0.31` floor is a runtime one, not just a test
+one: below it a pushed IR never re-appears in the device IR listing (core #38),
+so the IRs tab misreports what is on the device.
 
 ```sh
 uv run pytest          # test suite

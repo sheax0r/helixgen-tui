@@ -194,8 +194,9 @@ damage after the presets were already deleted, and no TUI surface passes
   `HelixError("no Helix Stadium answered at …")` for a device that dropped off
   the LAN — the *likelier* of the two paths, given the Stadium's flaky network
   stack. That now reported `prune aborted: …` with the service still showing
-  "connected". The catch is narrowed to the engine's re-scan abort (`listings
-  changed`) and re-raises everything else, with a unit test for each half.
+  "connected". The catch was first narrowed to the engine's re-scan abort
+  (`listings changed`); the fourth pass inverted that (see below), because the
+  aborts are an open set and the connect messages are not.
 - **The prune plan could only lead to a confirm that refuses.**
   `plan_prune_irs` rendered the engine's `warnings` as informational lines
   beside the delete list, but `ir_prune(execute=True)` raises `ValueError`
@@ -248,3 +249,36 @@ The live suite structurally cannot see it: every test drives `real_port`
 directly, never through `DeviceService`. Not a constant to bump in a review
 pass — a long backstop means ten minutes of no feedback on a wedged op, so it
 wants per-op timeouts and an in-flight indicator.
+
+### Found in the fourth review pass (2026-07-27)
+
+One root cause, two symptoms: **which `HelixError` means "the device is gone"
+was decided in three places, each differently.**
+
+- **The connect-class set was one message, not three.** `_reraise_connect_
+  failure` matched only `HelixClient.connect`'s "no Helix Stadium answered".
+  The installed engine also raises "could not open device socket" (`_open_
+  socket`, which `reconnect` uses too) and "device connection lost after N
+  reconnect attempts" (`_rpc`, reconnects exhausted). `ir_prune` runs two full
+  strict scans and one `get_content` RPC per pool preset, so a mid-operation
+  drop is the *likelier* failure — and it landed in the soft-abort branch with
+  the header still claiming "connected". Now `_CONNECT_FAILURES`, a module
+  constant, with an offline test asserting every marker still appears in the
+  installed `HelixClient` source (a test raising its own copy of the string
+  proves nothing about the engine).
+- **The prune fix was applied at the wrong altitude.** `_session` maps every
+  `HelixError` to `DeviceUnreachable` — right for a read, wrong for a mutation:
+  `delete_ir`/`rename_ir` reach `resolve_device_ir_live`, whose `-11` listing is
+  strict, so a truncated reply from a perfectly reachable device flipped the
+  whole app offline and discarded the engine's remediation text. Two verbs, the
+  same engine error, opposite app behavior. `_op` now performs the same split
+  for every mutating verb (unwrapping `_session`'s `DeviceUnreachable` when its
+  cause is not connect-class), which is also what its docstring always claimed.
+- `plan_prune_irs` caught `HelixError` but not `OSError`, unlike every sibling
+  path — a socket error reached `DeviceService.query` as a generic failure.
+
+Also, from the simplification lens: both conftests re-derived
+`$HELIXGEN_HOME`/`$HELIXGEN_LOCKS` precedence by hand and were then defended by
+two tests asserting the copies matched `helixgen_home()`/`locks_root()`. They
+now call the engine's resolvers directly and the two tests are gone — the
+duplication they existed to police no longer exists.

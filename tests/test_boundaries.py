@@ -118,33 +118,3 @@ def test_real_home_guard_snapshot_excludes_only_locks_and_git_metadata(tmp_path)
         str(tmp_path / "library" / "index.json"),
     }
     assert _snapshot_real_home(tmp_path / "missing") is None
-
-
-def test_real_home_guard_excludes_the_lock_root_the_engine_actually_uses(
-    tmp_path, monkeypatch
-):
-    """``locks_root()`` prefers $HELIXGEN_LOCKS over the $HELIXGEN_HOME-derived
-    default, so a guard deriving ``<home>/locks`` excludes the WRONG subtree on
-    a machine with a custom lock root — and then fails the session over the
-    live suite's own expected lease churn."""
-    monkeypatch.setenv("HELIXGEN_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("HELIXGEN_LOCKS", str(tmp_path / "elsewhere"))
-    root_conftest = _load_conftest("conftest.py", "_root_conftest_custom_locks")
-
-    from helixgen import locks
-
-    assert root_conftest.REAL_LOCKS_ROOT == locks.locks_root()
-
-
-def test_live_suite_keeps_the_lock_root_the_engine_actually_reads(tmp_path, monkeypatch):
-    """The session `all` lease exists to exclude OTHER helixgen processes on
-    this machine. Writing it under ``<home>/locks`` while the machine's engine
-    reads ``$HELIXGEN_LOCKS`` puts it in a root nobody consults — the run's
-    whole exclusion guarantee, silently doing nothing."""
-    monkeypatch.setenv("HELIXGEN_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("HELIXGEN_LOCKS", str(tmp_path / "elsewhere"))
-    live_conftest = _load_conftest("live/conftest.py", "_live_conftest_custom_locks")
-
-    from helixgen import locks
-
-    assert live_conftest._REAL_LOCKS == locks.locks_root()

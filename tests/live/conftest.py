@@ -121,6 +121,8 @@ from importlib.metadata import version
 from pathlib import Path
 
 import pytest
+from helixgen.home import helixgen_home
+from helixgen.locks import locks_root
 
 #: Every artifact the suite creates carries this prefix; teardown helpers
 #: refuse to touch anything without it.
@@ -130,21 +132,15 @@ DEVICE_PORT = 2002
 LIVE_ENABLED = os.environ.get("HELIXGEN_TUI_LIVE") == "1"
 
 _LIVE_DIR = Path(__file__).resolve().parent
-#: The user's REAL helixgen home, resolved at import (i.e. BEFORE ``_live_env``
-#: redirects ``$HELIXGEN_HOME`` to scratch) the same way the engine resolves it.
-#: Honouring ``$HELIXGEN_HOME`` matters for the lock root below: the engine
-#: derives ``locks/`` from it, so hardcoding ``~/.helixgen`` on a machine with a
-#: custom home would put the session lease in a root no other helixgen process
-#: reads — the run's whole exclusion guarantee, silently doing nothing.
-_REAL_HELIXGEN = Path(os.environ.get("HELIXGEN_HOME") or Path.home() / ".helixgen").expanduser()
-#: The REAL lease root, resolved with the engine's OWN precedence
-#: (``helixgen.locks.locks_root``): ``$HELIXGEN_LOCKS`` WINS over the
-#: ``$HELIXGEN_HOME``-derived default. Deriving it from the home alone would
-#: put the session lease in a root no other helixgen process on a machine with
-#: a custom ``$HELIXGEN_LOCKS`` reads — the run's whole exclusion guarantee,
-#: silently doing nothing. That is the same inertness the comment above guards
-#: against, one env var further down the chain.
-_REAL_LOCKS = Path(os.environ.get("HELIXGEN_LOCKS") or _REAL_HELIXGEN / "locks").expanduser()
+#: The user's REAL helixgen home and lease root, resolved by the ENGINE's own
+#: functions at import (i.e. BEFORE ``_live_env`` redirects ``$HELIXGEN_HOME``
+#: to scratch). Re-deriving the precedence here is free to drift from the
+#: engine, and the lock root is where that bites: the session ``all`` lease
+#: exists to exclude every OTHER helixgen process on this machine, so writing it
+#: to a root nobody reads makes the run's whole exclusion guarantee silently do
+#: nothing.
+_REAL_HELIXGEN = helixgen_home()
+_REAL_LOCKS = locks_root()
 
 
 def _resolve_device_ip() -> str | None:
