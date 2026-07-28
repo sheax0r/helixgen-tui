@@ -5,6 +5,7 @@ it has no other dedicated test module: mutations append to `.calls`, and
 `fail_next` raises `DeviceUnreachable` exactly once, then clears itself).
 """
 
+import importlib.util
 import pathlib
 import re
 
@@ -80,3 +81,53 @@ def test_fake_core_setlist_port_records_mutations():
     result = core.setlists.add_tone("Gig 1", "tone-1")
     assert result.ok is True
     assert core.setlists.calls == [("add_tone", ("Gig 1", "tone-1"))]
+
+
+def _load_conftest(relpath: str, name: str):
+    """Import a conftest BY PATH, not `from conftest import ...`:
+    tests/live/conftest.py has no package dir, so it also imports under the
+    bare name "conftest" and wins."""
+    spec = importlib.util.spec_from_file_location(
+        name, pathlib.Path(__file__).parent / relpath
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_real_home_guard_snapshot_excludes_only_locks_and_git_metadata(tmp_path):
+    """The session guard's whole value is the diff being non-empty when real
+    state changes: an over-broad exclusion would return {} for both snapshots
+    and pass unconditionally, silently dropping the backstop.
+
+    ``.git`` is excluded because ~/.helixgen is itself a git repo — an ambient
+    ``git status`` refreshes ``.git/index`` and failed the session over a diff
+    of nothing but index mtimes. A leaked write still lands in the worktree."""
+    _snapshot_real_home = _load_conftest("conftest.py", "_root_conftest")._snapshot_real_home
+
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "index.json").write_text("{}")
+    (tmp_path / "locks").mkdir()
+    (tmp_path / "locks" / "all.lock").write_text("x")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "index").write_text("x")
+
+    snapshot = _snapshot_real_home(tmp_path, locks=tmp_path / "locks")
+    assert set(snapshot) == {
+        str(tmp_path / "library"),
+        str(tmp_path / "library" / "index.json"),
+    }
+    assert _snapshot_real_home(tmp_path / "missing") is None
+
+    # The exclusion is against the path RELATIVE to the root. A home that
+    # itself sits under a ``.git`` component must still be snapshotted — the
+    # absolute-path variant returns {} for both snapshots there, `before ==
+    # after` holds trivially and the whole guard goes silently inert. tmp_path
+    # never contains ``.git``, so the case above cannot tell the two apart.
+    under_git = tmp_path / ".git" / "home"
+    (under_git / "library").mkdir(parents=True)
+    (under_git / "library" / "index.json").write_text("{}")
+    assert set(_snapshot_real_home(under_git, locks=under_git / "locks")) == {
+        str(under_git / "library"),
+        str(under_git / "library" / "index.json"),
+    }

@@ -8,7 +8,8 @@ screen re-renders the new order itself from the ``OpResult`` rather than
 re-reading the port (mirrors how ``RealSetlists`` persists the change: the
 port call is the source of truth, this is just an optimistic local echo of
 it). ``S``/``A`` are the two device actions: ``S`` syncs the selected setlist
-instantly, ``A`` confirms ``plan_sync_all`` before syncing every setlist —
+instantly, ``A`` confirms ``plan_sync_all`` before syncing every *synced*
+setlist (drafts are never mirrored, so the plan doesn't list them) —
 both refuse up front when offline, exactly like LibraryScreen's device
 actions. ``A`` reads its plan via ``DeviceService.query`` (like
 ``screens/irs.py``'s prune/delete plans) rather than calling the port

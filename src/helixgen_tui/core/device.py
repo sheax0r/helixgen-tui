@@ -29,11 +29,18 @@ themselves (``post_message``; see ``screens/library.py``'s
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from helixgen_tui.core.models import DeviceStateVM, OpResult
 from helixgen_tui.core.ports import DevicePort, DeviceUnreachable
+
+#: The one message every offline short-circuit reports. Screens branch on it to
+#: tell "the device is gone" from "a reachable device refused this read", so it
+#: is a shared constant rather than a literal repeated on both sides — reworded
+#: in one place, the branches silently stopped matching and the panels lost
+#: their retry affordance with nothing failing.
+DEVICE_OFFLINE = "device offline"
 
 _OFFLINE = DeviceStateVM(
     status="offline",
@@ -107,7 +114,7 @@ class DeviceService:
         service offline; exceeding ``timeout`` yields ``ok=False`` "timed out".
         """
         if self._state.status == "offline":
-            done(OpResult(ok=False, message="device offline"))
+            done(OpResult(ok=False, message=DEVICE_OFFLINE))
             return
         self._spawn(lambda: self._run_guarded(label, fn, done))
 
@@ -126,7 +133,7 @@ class DeviceService:
         read is free of I/O (list_device_irs, plan_* methods, ...).
         """
         if self._state.status == "offline":
-            done(QueryResult(ok=False, value=None, message="device offline"))
+            done(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
             return
         self._spawn(lambda: self._query_guarded(label, fn, done))
 
@@ -137,6 +144,17 @@ class DeviceService:
             state = self._port.probe()
         except DeviceUnreachable:
             self._set_state(_OFFLINE)
+            return
+        except Exception as exc:  # noqa: BLE001 — a probe that raises IS "not usable"
+            # The port only raises DeviceUnreachable for a connect-class
+            # failure; anything else (a protocol fault on a reachable device)
+            # would otherwise kill this daemon thread silently and freeze the
+            # header on its last state forever. Offline is the honest report
+            # for a probe that couldn't complete, and the next poll retries —
+            # but carry the reason into the footer's `detail`, or a persistent
+            # non-connect fault (or a bug in probe itself) is indistinguishable
+            # from a device that is simply off the LAN, with nothing logged.
+            self._set_state(replace(_OFFLINE, detail=f"probe failed: {exc}"))
             return
         self._set_state(state)
 
@@ -184,7 +202,7 @@ class DeviceService:
             done(OpResult(ok=False, message=f"{label}: timed out"))
         elif status == "unreachable":
             self._set_state(_OFFLINE)
-            done(OpResult(ok=False, message="device offline"))
+            done(OpResult(ok=False, message=DEVICE_OFFLINE))
         elif status == "error":
             done(OpResult(ok=False, message=f"{label}: {payload}"))
         else:
@@ -201,7 +219,7 @@ class DeviceService:
             done(QueryResult(ok=False, value=None, message=f"{label}: timed out"))
         elif status == "unreachable":
             self._set_state(_OFFLINE)
-            done(QueryResult(ok=False, value=None, message="device offline"))
+            done(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
         elif status == "error":
             done(QueryResult(ok=False, value=None, message=f"{label}: {payload}"))
         else:

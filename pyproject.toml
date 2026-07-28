@@ -1,6 +1,6 @@
 [project]
 name = "helixgen-tui"
-version = "0.3.0"
+version = "0.3.1"
 description = "Terminal UI for helixgen: tone library, setlists, and Line 6 Helix Stadium device control."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,7 +20,9 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "helixgen[device]>=0.26",
+    # >=0.31: push-ir heals the device's -11 IR listing cache (core #38) —
+    # on older engines a pushed IR never appears in list-irs
+    "helixgen[device]>=0.31",
     "textual>=8,<9",
 ]
 
@@ -52,6 +54,9 @@ include = ["helixgen_tui*"]
 testpaths = ["tests"]
 addopts = "-ra"
 asyncio_mode = "auto"
+markers = [
+    "live: opt-in live device suite (tests/live) — requires HELIXGEN_TUI_LIVE=1",
+]
 
 [tool.ruff]
 line-length = 100

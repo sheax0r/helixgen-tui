@@ -8,6 +8,7 @@ stays well under a second. No real device is ever contacted.
 
 from __future__ import annotations
 
+import threading
 import time
 
 from helixgen_tui.core.device import DeviceService, QueryResult
@@ -47,6 +48,23 @@ def test_probe_unreachable_reports_offline_state():
     svc.retry_now()
     assert states[-1].status == "offline"
     assert svc.state.status == "offline"
+
+
+def test_probe_non_connect_failure_reports_offline_with_the_reason():
+    """A probe raising anything other than DeviceUnreachable (a protocol fault
+    on a reachable device, or a bug in the port itself) must not silently kill
+    the poller thread — but it must also not present as a bare "offline",
+    indistinguishable from a device that is simply off the LAN. The reason
+    rides `detail`, which the footer renders."""
+
+    class _BrokenProbePort(FakeDevicePort):
+        def probe(self):
+            raise TypeError("probe() got an unexpected keyword argument 'strict'")
+
+    svc, states = _service(_BrokenProbePort(state=_CONNECTED))
+    svc.retry_now()
+    assert states[-1].status == "offline"
+    assert "unexpected keyword argument" in states[-1].detail
 
 
 def test_run_while_offline_short_circuits_without_touching_port():
@@ -186,3 +204,49 @@ def test_query_timeout_yields_failure_with_timed_out_message():
     assert results[-1].ok is False
     assert results[-1].value is None
     assert "timed out" in results[-1].message
+
+
+def test_run_timeout_reports_failure_while_the_write_still_lands():
+    """Backlog #26's dangerous half: the timeout is a JOIN, not a cancel.
+
+    ``_call_guarded`` starts a daemon thread and gives up waiting after
+    ``timeout``; nothing stops the thread. So a mutating verb slower than the
+    join reports ``"<label>: timed out"`` to the footer and then completes
+    anyway — a false failure over a write that lands. Measured on hardware
+    2026-07-28: ``plan_prune_irs`` takes 51.4s against the 5s default, so the
+    app's Prune flow hits this every time.
+    """
+    port = FakeDevicePort(state=_CONNECTED)
+    svc = DeviceService(port, on_state=lambda _s: None, timeout=0.01)
+    svc._state = _CONNECTED  # noqa: SLF001 — test drives the online precondition
+
+    landed: list[str] = []
+    results: list[OpResult] = []
+    release = threading.Event()
+
+    def _slow_write() -> OpResult:
+        # Gated on the test rather than a wall-clock sleep: a scheduling stall
+        # longer than the sleep would let the write land before the timeout is
+        # observed, failing the precondition below on nothing but load.
+        release.wait(2.0)
+        landed.append("device mutated")  # the write the user was told failed
+        return OpResult(ok=True, message="pruned")
+
+    svc.run("Prune", _slow_write, results.append)
+
+    deadline = time.monotonic() + 0.9
+    while not results and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert results, "done callback was never invoked"
+    assert results[-1].ok is False
+    assert "timed out" in results[-1].message
+    assert not landed, "precondition: the write had not finished at report time"
+
+    release.set()
+    deadline = time.monotonic() + 0.9
+    while not landed and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert landed == ["device mutated"], (
+        "the worker was abandoned, not cancelled — the write lands after the "
+        "failure is reported"
+    )

@@ -7,6 +7,7 @@ import re
 from helixgen_tui.app import HelixgenTuiApp
 from helixgen_tui.core.device import QueryResult
 from helixgen_tui.core.models import DeviceStateVM, IrVM, MutationPlan
+from helixgen_tui.screens.irs import _DEVICE_PLACEHOLDER_TEXT
 from helixgen_tui.widgets.confirm_modal import ConfirmModal
 from helixgen_tui.widgets.status_footer import StatusFooter
 from textual.widgets import DataTable, Input
@@ -80,8 +81,10 @@ async def test_device_pane_shows_offline_placeholder_when_disconnected():
         placeholder_text = "\n".join(
             str(w.render()) for w in app.screen.query("#irs-device-placeholder")
         )
-        assert "unavailable" in placeholder_text
-        assert "device offline" in placeholder_text
+        # The exact placeholder: the pane branches on the offline message to
+        # choose between it and a soft failure's own text, and a substring
+        # check passes on either.
+        assert placeholder_text == _DEVICE_PLACEHOLDER_TEXT
         device_table = app.screen.query_one("#irs-device-table", DataTable)
         assert device_table.display is False
 
@@ -205,6 +208,30 @@ async def test_capital_p_renders_plan_lines_verbatim():
         await pilot.press("y")
         await pilot.pause()
         assert ("prune_irs", ()) in port.calls
+
+
+async def test_capital_p_planning_failure_refuses_without_modal():
+    """A prune plan that RAISES must reach the footer, not the modal. The whole
+    reason ``plan_prune_irs`` raises (on an engine abort, or on warnings that
+    would make the confirm refuse) is that a ConfirmModal over an unknown
+    delete list is a destructive verb with no preview — and `y` runs it."""
+
+    class _RaisingPruneDevicePort(FakeDevicePort):
+        def plan_prune_irs(self) -> MutationPlan:
+            raise RuntimeError("cannot plan a prune: tone 'x' unreadable")
+
+    port = _RaisingPruneDevicePort(state=_CONNECTED, device_irs=list(_DEVICE_IRS))
+    core = FakeCore(local_irs=list(_LOCAL_IRS), device=port)
+    app = HelixgenTuiApp(core, device_spawn=_sync_spawn)
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("P")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal)
+        assert ("prune_irs", ()) not in port.calls
+        footer = app.screen.query_one(StatusFooter)
+        assert "tone 'x' unreadable" in footer.last_action
 
 
 async def test_capital_p_offline_refuses_without_modal():
@@ -783,3 +810,43 @@ async def test_a_failed_device_refresh_drops_the_pending_rename_target():
 
         assert screen._renamed_to is None
         assert screen.query_one("#irs-device-table", DataTable).display is False
+
+
+async def test_a_reachable_device_read_failure_shows_the_engine_message():
+    """A non-connect abort (a strict listing over a truncated reply) fails soft
+    with the header still connected. The placeholder used to claim "device
+    offline" regardless, contradicting the header and discarding the only copy
+    of the engine's remediation text."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        screen = app.screen
+
+        screen._apply_device_irs(
+            QueryResult(ok=False, value=None, message="list_device_irs: incomplete IR listing")
+        )
+        await pilot.pause()
+
+        text = str(screen.query_one("#irs-device-placeholder").render())
+        assert "incomplete IR listing" in text
+        assert "device offline" not in text
+
+
+async def test_device_read_failure_message_with_markup_renders_verbatim():
+    """That message is arbitrary engine text now, so the placeholder needs the
+    same markup=False guard the device screen's Statics carry: a stray "[/]"
+    raises MarkupError out of the render pipeline, and "[word]" is silently
+    stripped from the diagnostic (backlog #12's class)."""
+    app, port = _app()
+    async with app.run_test() as pilot:
+        await _open_irs(pilot)
+        screen = app.screen
+
+        screen._apply_device_irs(
+            QueryResult(ok=False, value=None, message="IR 'Cab [reverb] v2' failed [/]")
+        )
+        await pilot.pause()
+
+        text = str(screen.query_one("#irs-device-placeholder").render())
+        assert "[reverb]" in text
+        assert "[/]" in text

@@ -29,7 +29,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import DataTable, Input, Static
 
-from helixgen_tui.core.device import QueryResult
+from helixgen_tui.core.device import DEVICE_OFFLINE, QueryResult
 from helixgen_tui.core.models import IrVM, MutationPlan, OpResult
 from helixgen_tui.screens.base import LibrarianScreen
 from helixgen_tui.screens.filterable import FilterableTableMixin
@@ -41,7 +41,7 @@ _DEVICE_PLACEHOLDER_ID = "irs-device-placeholder"
 _RENAME_INPUT_ID = "irs-rename-input"
 _FILTER_ID = "irs-filter"
 
-_DEVICE_PLACEHOLDER_TEXT = "unavailable — device offline"
+_DEVICE_PLACEHOLDER_TEXT = f"unavailable — {DEVICE_OFFLINE}"
 
 
 def _short_hash(irhash: str | None) -> str:
@@ -173,7 +173,14 @@ class IrsScreen(LibrarianScreen):
             with Vertical():
                 yield Static("Device IRs")
                 yield DataTable(id=_DEVICE_TABLE_ID, cursor_type="row")
-                yield Static(_DEVICE_PLACEHOLDER_TEXT, id=_DEVICE_PLACEHOLDER_ID)
+                # markup=False: this used to hold one fixed literal, but the
+                # soft-failure branch below now writes arbitrary engine text
+                # into it — a stray "[/]" in a HelixError message would raise
+                # MarkupError out of the render pipeline, and "[word]" would be
+                # silently stripped from the diagnostic (backlog #12's class).
+                yield Static(
+                    _DEVICE_PLACEHOLDER_TEXT, id=_DEVICE_PLACEHOLDER_ID, markup=False
+                )
         yield Input(placeholder="rename IR", id=_RENAME_INPUT_ID)
 
     def on_mount(self) -> None:
@@ -261,7 +268,7 @@ class IrsScreen(LibrarianScreen):
         from the UI thread."""
         service = self.app.device_service
         if service is None:
-            self._apply_device_irs(QueryResult(ok=False, value=None, message="device offline"))
+            self._apply_device_irs(QueryResult(ok=False, value=None, message=DEVICE_OFFLINE))
             return
         device = self.app.core.device
         service.query("list_device_irs", device.list_device_irs, self._on_device_irs_query_done)
@@ -279,6 +286,17 @@ class IrsScreen(LibrarianScreen):
         table = self.query_one(f"#{_DEVICE_TABLE_ID}", DataTable)
         placeholder = self.query_one(f"#{_DEVICE_PLACEHOLDER_ID}", Static)
         if not result.ok or result.value is None:
+            # Say WHY, don't assume offline. A non-connect abort on a reachable
+            # device (a strict listing over a truncated reply) now fails soft
+            # with the engine's remediation text while the header stays
+            # connected — the hardcoded "device offline" contradicted it and
+            # threw the only copy of that text away. The offline case still
+            # reads exactly as before: its message IS "device offline".
+            placeholder.update(
+                f"unavailable — {result.message}"
+                if result.message
+                else _DEVICE_PLACEHOLDER_TEXT
+            )
             self._device_irs = []
             self._device_pane.rebuild_filtered()
             # Drop any pending rename target too: the list it referred to is

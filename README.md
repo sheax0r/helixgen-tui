@@ -67,11 +67,27 @@ swap the model. Selecting the output node edits its level/pan; the input node's
 source is read-only. Add/remove refuse on a parallel-routed path. Edits write to
 the local library file on `s` — never to the device.
 
+**Setlist sync:** `✓` marks a setlist the device mirrors; `○` is a local
+draft. `S` syncs the selected setlist and opts it into mirroring; `A` syncs
+every `✓` setlist and never opts a draft in — so a library where nothing has
+been synced yet shows *(no synced setlists to sync)* in the confirm. Both also
+remove device presets for tones you have **unsynced** since the last run,
+which is why the sync-all confirm says so; a preset a live setlist still
+references is left alone and named in the status bar. `S` on the **Library**
+tab runs the same engine call for one tone's setlists, so it carries the same
+mirror deletes — with no confirm at all; tracked in `docs/BACKLOG.md` #32.
+
 **Offline-first:** the app works fully with no device on the LAN — Library,
 Setlists, and IRs stay browsable from local state. Device-mutating actions
 (activate, sync, push, backup, restore, ...) simply refuse with a reason in
 the status bar when no Helix is reachable, and reconnect automatically (or
-via `r` on the Device tab) once one is.
+via `r` on the Device tab) once one is. A device that *is* reachable but
+refuses or aborts an operation is a third state: the header stays connected
+and the panel or status bar shows the engine's own reason and remediation
+text, rather than the app going offline over one dropped frame. The exception
+is a background *probe* that itself fails: the header does go offline, carrying
+`probe failed: …` as its reason, because a probe that can't complete says
+nothing about whether the device is usable.
 
 **Design principle: slots are invisible.** The UI speaks in tones and
 setlists only — slot addresses like `5A` are an implementation detail the
@@ -81,6 +97,27 @@ user never sees or types.
 > they await core-side verbs (a restore that carries its target preset, and a
 > single-pool-preset delete). The UI surfaces a clear reason until then. See
 > `docs/BACKLOG.md` #6.
+>
+> Three device-IR verbs can report something short of a clean success, all by
+> design: deleting an IR (`d`) can half-succeed — the Helix removes the registry
+> entry but leaves the backing file behind, reported as *"registry entry
+> removed; backing file left on the device"*; clean that up with `helixgen
+> device delete-ir <hash> --force-wedge --yes` (the TUI does not offer the
+> forced delete). And prune (`P`) refuses in the status bar, without opening a
+> confirm, whenever the engine can't verify some local tones' IR references —
+> a confirm it could only fail is worse than no confirm. One library tone with a
+> missing `.hsp` is enough to refuse every prune from then on, and the TUI offers
+> no way to fix it from inside the app; tracked in `docs/BACKLOG.md` #28. And
+> pushing an IR (`p`) surfaces the engine's own refusal verbatim — e.g. *"IR
+> 'foo': hash_mismatch"* — where earlier versions reported a bare success over
+> a push that never landed.
+>
+> Also known: long device operations — *sync all* and *prune* especially — can
+> report `timed out` in the status bar after ~5s while the operation is still
+> running on the device and goes on to complete. The failure is in the
+> reporting, not the write; nothing is rolled back. Re-check the tab (`r` on
+> Device) before retrying rather than firing the same write again. Tracked in
+> `docs/BACKLOG.md` #26.
 
 The long-term goal is full parity with the Helix Stadium desktop app
 (tracked in helixgen-core's `docs/stadium-app-parity.md`); this v1 ships the
@@ -91,8 +128,10 @@ settings, tuner/meters) to follow. See `docs/BACKLOG.md`.
 ## Development
 
 Managed with [uv](https://docs.astral.sh/uv/); the package layout is
-`src/helixgen_tui/`, depending on `helixgen[device]` from PyPI (never vendor
-core source here).
+`src/helixgen_tui/`, depending on `helixgen[device]>=0.31` from PyPI (never
+vendor core source here). The `0.31` floor is a runtime one, not just a test
+one: below it a pushed IR never re-appears in the device IR listing (core #38),
+so the IRs tab misreports what is on the device.
 
 ```sh
 uv run pytest          # test suite
@@ -100,6 +139,35 @@ uv run ruff check .    # lint
 uv run helixgen-tui    # run the app
 uv build               # sdist + wheel
 ```
+
+The suite is offline by default: `tests/live/` (the real device port against
+real hardware, real device writes) hard-skips at collection unless
+`HELIXGEN_TUI_LIVE=1` — every skip in a normal run is that gate. To run it
+against a Helix Stadium on the LAN:
+
+```sh
+HELIXGEN_TUI_LIVE=1 uv run pytest tests/live -q
+```
+
+It needs port 2002 TCP-reachable, an ingested block library, and a resolvable
+device IP (`HELIXGEN_HELIX_IP`, else a `helixgen device discover` record) —
+without any of those it skips rather than fails. An installed `helixgen` below
+`0.31` is the one hard failure: below it a pushed IR never re-appears in
+`list-irs` (core #38), so the IR tests would read as a TUI regression. All local
+helixgen state is
+redirected to a scratch dir for the run and every artifact is `HGTEST`-prefixed;
+the safety model and the deliberately excluded verbs are documented in
+`tests/live/conftest.py`.
+
+Two recoveries worth knowing before you need them. A run killed outright
+(SIGKILL, not Ctrl-C) leaves the machine's **real** advisory `all` device lease
+held for up to its 1800s TTL, which blocks every other helixgen process on the
+machine — clear it with `helixgen device unlock --force`. And a
+`~/.helixgen changed during the test session` failure is not necessarily a
+suite leak: another helixgen process (an editor, a parallel agent, a shell)
+touching the real home fails the session the same way. Tell them apart by
+re-running under an isolated home — `HELIXGEN_HOME=$(mktemp -d) uv run pytest`
+— which still fails only if the suite really did leak.
 
 CI (GitHub Actions) runs ruff + pytest on every PR and push to `main`;
 `publish.yml` releases to PyPI via OIDC trusted publishing on `v*` tags.

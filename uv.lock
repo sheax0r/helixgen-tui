@@ -249,14 +249,14 @@ wheels = [
 
 [[package]]
 name = "helixgen"
-version = "0.26.0"
+version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/cd/ecb7adc096123ec919f5e5a06417d2f84c79accd8eee129fa76fa7845775/helixgen-0.26.0.tar.gz", hash = "sha256:7e36a6406a3c593e01f3eb713fceff5b54b34e1f5fd8d3b86e16395c62cdd72d", size = 686041, upload-time = "2026-07-17T05:21:20.583Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/90/b896e2074cc9ac1fbdd30aee0ef12bc8b15bdd27c8e8f0930e5b54373ba3/helixgen-0.32.0.tar.gz", hash = "sha256:4b34b90ec171ef294403fde00c561e071eaf2407083b2b547689ebe471cfac96", size = 778355, upload-time = "2026-07-27T20:53:41.794Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/2e/cfb6f8ddc0dc6df004f9824de864364e75e5c13b7722c8e309524e7e577e/helixgen-0.26.0-py3-none-any.whl", hash = "sha256:0d94990e58af52a2b49a7a4306ffce431a24c649598f05b29e5417cd3c80ecbb", size = 441674, upload-time = "2026-07-17T05:21:19.06Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/7e/305b85e6e1c8e0ac3f6fb86cdf6a748a8309dc3dbeba94b60ec3368dbc40/helixgen-0.32.0-py3-none-any.whl", hash = "sha256:07897d799b2d02644ba7e4c6cbd8025e7b197ad58f962e643e197e35492dc6a9", size = 481566, upload-time = "2026-07-27T20:53:39.864Z" },
 ]
 
 [package.optional-dependencies]
@@ -268,7 +268,7 @@ device = [
 
 [[package]]
 name = "helixgen-tui"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "helixgen", extra = ["device"] },
@@ -284,7 +284,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "helixgen", extras = ["device"], specifier = ">=0.26" },
+    { name = "helixgen", extras = ["device"], specifier = ">=0.31" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },

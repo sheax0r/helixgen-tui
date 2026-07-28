@@ -28,11 +28,34 @@ before any code.
   D4-modal permission bridging, graceful degradation, library refresh) are
   settled in the v1 design spec's "first post-v1 screen" section; binding
   choice (Agent SDK vs headless CLI) deferred to build time.
-- **#5 Live smoke suite (`HELIXGEN_TUI_LIVE=1`)** — deferred per spec D6;
-  validate `RealDevicePort` verbs on hardware. The v1 build's device tests
-  are entirely `FakeDevicePort`-driven (no real hardware in CI or dev); this
-  entry tracks writing an opt-in, env-gated suite that exercises the real
-  port's per-verb delegations against an actual Helix Stadium.
+- ✅ **#5 Live smoke suite (`HELIXGEN_TUI_LIVE=1`)** — shipped 2026-07-27:
+  `tests/live/` runs `RealDevicePort`'s verbs against real hardware behind an
+  env gate + TCP probe + full safety chain (scratch state redirect, upfront
+  backup, session state guard, `HGTEST`-only artifacts). Hardware-validated on
+  a Stadium XL (fw 1.3.2): final run 20 passed / 1 skipped (prune safety gate,
+  by design). Found and fixed one TUI defect (`push_ir` reported `ok=True` on
+  engine soft failures); one engine gap was already fixed upstream as core #38
+  (helixgen 0.31, engine pin bumped to `>=0.31` — nothing new filed).
+  Adversarial review of the suite then found three more real-port defects the
+  shape-only plan assertions had passed over — `plan_prune_irs` read report
+  keys the engine never emits (so a destructive confirm modal always claimed
+  there was nothing to prune), and `prune_irs`/`delete_ir` hardcoded `ok=True`
+  over reports carrying the engine's refusals — all fixed, with the plan test
+  now cross-checked against `device ir-prune --json`. Findings doc:
+  `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`.
+  **Closed out 2026-07-28** after a re-plan (the original plan left design
+  decisions to the implementer, so its review ran 12 fix rounds without
+  converging — lesson filed as workspace #100). Re-run end to end in final
+  form: **20 passed / 1 skipped in 556.76s**, the skip being the prune safety
+  gate refusing to prune five non-`HGTEST` user IRs it named; no TUI or engine
+  defects surfaced; device left clean. Also confirmed **#26** on hardware.
+  Close-out design + findings:
+  `docs/superpowers/specs/2026-07-28-live-smoke-suite-closeout-design.md`,
+  `docs/superpowers/specs/2026-07-28-live-smoke-suite-findings.md`.
+  Deferrals: #25, #26 (fix), #27, #28, #29, #30, #31, #32 — #28 in particular
+  qualifies the result above: the one skip is `prune_irs(execute=True)`, which
+  has no hardware coverage at all on this device and cannot get any until that
+  gate is made satisfiable.
 - **#6 Core Python verbs missing for restore-with-cid, tone delete, single-tone
   push** — `RealDevicePort` returns `ok=False` for these; the engine change
   lands in helixgen-core first (ref #3's stable-API ask).
@@ -354,3 +377,223 @@ one — `RealDevicePort._op` catches broad on purpose (it fails soft to
 `OpResult(ok=False)` for the footer), so those want a targeted `noqa` with the
 reason, not a narrowed except. `RUF012` wants `ClassVar` annotations on Textual
 `BINDINGS`/`CSS` class attributes. Then unpin, or bump the pin deliberately.
+
+## 25. Live-suite brittleness left unfixed (review findings, 2026-07-27)
+
+Minor, live-suite-only, all deferred deliberately in the second review pass of
+the `tests/live/` branch:
+
+- `test_backup_via_port`'s `any(before.get(p) != m for p, m in after.items())`
+  is `any([])` → False on a device with **zero** user presets, failing the test
+  instead of passing vacuously. Guard on `n`.
+- `test_prune_irs_executes_only_against_hgtest_orphans` asserts the exact
+  message `"pruned 1 unreferenced device IR(s)"`; a leaked *wedged* HGTEST IR
+  (invisible to the state guard) makes it 2 and the failure reads as a port
+  regression. Safety is unaffected — the gate still restricts execution to
+  HGTEST-only orphans. Prefer `startswith("pruned ")` plus the hash-gone check.
+  In the same test, `next(o.get("name") ...)` can yield `None`, and
+  `None in planned` raises `TypeError` rather than failing the assertion.
+- `_live_env` mutates `os.environ` for the whole session and only restores at
+  session teardown, so modules collected after `tests/live/` run with
+  `HELIXGEN_HELIX_IP` set. Inert today (nothing after it builds the real core),
+  but a future test added there would silently talk to hardware. Fix: assert in
+  `tests/conftest.py`'s session guard that non-live tests see no device IP.
+- `DEVICE_IP` is resolved at import on every default run and printed into the
+  `-ra` skip reason, so the LAN address shows up in local/CI test output.
+- The IR roundtrip drives `delete_ir`/`rename_ir` with an irhash, but
+  `screens/irs.py` passes `IrVM.name` — so `resolve_device_ir_live`'s
+  name-resolution path (the only one the app takes, including the
+  ambiguous-duplicate-name case in section 9) is never exercised on hardware.
+- Cosmetics left alone: `helix` is a pass-through alias for `cli`;
+  `test_safety_chain_up` restates what the `device_backup` fixture already
+  asserted; `test_probe_unconfigured_raises_without_socket` still patches the
+  stdlib `socket` its own docstring calls inert; `_write_test_wav` builds a
+  seeded decay envelope where two distinct bytes would do.
+
+## 26. `DeviceService`'s 5s timeout is shorter than the device verbs it guards (review finding, 2026-07-27) — **CONFIRMED on hardware 2026-07-28**
+
+**Measured** against the Stadium XL (fw 1.3.2 b1340), helixgen 0.32.0, with the
+service driven exactly as the app drives it (state `connected`, real
+daemon-thread spawn):
+
+| call | wall clock |
+|---|---|
+| `port.probe()` | 2.97 s |
+| `port.plan_prune_irs()` | **51.42 s** |
+| `port.plan_sync_all(gc=False)` | 0.00 s (local manifest only — no device I/O) |
+| the same `plan_prune_irs` through `DeviceService.query` | returns at **5.01 s** with `ok=False`, `message='Prune: timed out'` |
+
+So the Prune preview reports a timeout **every time** on this device and the
+preview never appears; the 10× margin means no plausible device is fast enough.
+Sync *planning* is unaffected (no device I/O); the sync *execute* path is
+unmeasured here but runs through the same 5 s join.
+
+The timeout is a **join, not a cancel**: `_call_guarded` starts a daemon
+thread and stops waiting, so a mutating verb slower than the join reports
+failure to the footer and then completes anyway — a false failure over a write
+that lands. Pinned by
+`tests/core/test_device_service.py::test_run_timeout_reports_failure_while_the_write_still_lands`.
+
+Fix still deferred deliberately (it is a UX decision, not a constant — see
+below); this entry now records evidence rather than inference.
+
+### Original analysis (2026-07-27)
+
+
+`DeviceService.__init__` defaults `timeout=5.0` (`core/device.py`) and
+`app.py`'s `on_mount` never overrides it, so every `run()`/`query()` joins its
+worker thread for 5 seconds and then reports `"<label>: timed out"`. The live
+suite measured what these verbs actually cost on hardware — 21 tests in 371s,
+with `device ir-prune` and `device sync` budgeted at 300s and 600s — and
+`ir_prune` alone does two full strict scans (pool listing, pool/reference
+cross-check, IR listing, per-preset IR-reference scan) per call. So in the app
+the Prune and Sync flows almost certainly report a timeout every time, **while
+the daemon thread keeps running and keeps mutating the device**: a false
+failure over a write that lands.
+
+The live suite structurally cannot see this — every test drives `real_port`
+directly, never through `DeviceService`.
+
+Not fixed in the review pass because the fix is a UX decision, not a constant:
+a long backstop (600s) means a genuinely wedged op gives no footer feedback for
+ten minutes, so it wants an in-flight indicator and/or per-op timeouts (long for
+the known-slow mutating verbs, short for reads) rather than a bigger number.
+Note the UI is never actually blocked — `run`/`query` spawn off-thread — so the
+timeout only controls when a result is reported. Work when picked up: per-call
+`timeout` override on `run`/`query`, slow call sites passing it, plus one test
+driving a verb through `DeviceService` end to end.
+
+## 27. Live-suite safety helpers have no offline test (review finding, 2026-07-27)
+
+`tests/live/conftest.py`'s guard helpers — `_normalize_rows`,
+`_capture_device_state`, `_sweep_stale_hgtest_artifacts` — are the whole
+safety net for a suite that writes to real hardware, yet nothing exercises
+them. They already take an injectable `cli`, so an offline test with a stub
+runner is cheap; their sibling `_snapshot_real_home` got exactly that
+treatment (`tests/test_boundaries.py`) and it caught a real inertness bug.
+
+The failure mode is the bad one: a broken guard does not fail loudly, it goes
+**inert** — `_capture_device_state` returning a shape that compares equal
+regardless of what changed reports a clean device over a leaked artifact, and
+the suite's whole "no device state changed" claim becomes vacuous. Worth a
+handful of stub-`cli` tests: a row missing its id key routes to `failed`
+rather than raising, a non-`HGTEST` row is never swept, a delete that exits
+non-zero is fatal, and a changed row genuinely produces a non-empty diff.
+
+Related: `test_list_device_irs_matches_engine_cli` passes vacuously on a
+device with no IRs (both sides empty), and `tests/live/conftest.py`'s
+`_REAL_HELIXGEN`/`_REAL_LOCKS` are a second name for `tests/conftest.py`'s
+`REAL_HELIXGEN_HOME`/`REAL_LOCKS_ROOT` — same engine calls, but the two files
+must agree (the root guard excludes exactly the root the live suite writes to)
+and nothing enforces it. A shared `tests/support.py` would retire both those
+constants and `test_boundaries.py`'s by-path `_load_conftest` importer.
+
+## 28. Prune is unreachable in the app and unverified on hardware (review finding, 2026-07-27)
+
+Two halves of the same gap, both left by the live-suite branch:
+
+- **In the app, `P` can be permanently unreachable.** `plan_prune_irs` raises on
+  *any* entry in `ir_prune`'s `warnings` — correct, because
+  `ir_prune(execute=True)` refuses over unverifiable local IR references and the
+  port deliberately never passes `ignore_warnings` (that would be failing open
+  on a destructive verb). But a warning comes from
+  `local_referenced_ir_hashes`: **one** library tone whose recorded `.hsp` is
+  missing or unreadable produces one, permanently, whether or not the device has
+  any orphans at all. That is the state of the device used for the hardware run,
+  so on a real library the prune modal simply never opens again. The footer says
+  the prune "would refuse to execute"; the TUI offers no way out. Work when
+  picked up: surface the unverifiable tones as an actionable list (they are a
+  fixable library problem — a re-register or a delete), and only then consider a
+  second explicit consent. README's known-issues section documents the refusal
+  but pointed at no tracked follow-up.
+- **`prune_irs(execute=True)` has no hardware coverage and cannot get any on
+  this device.** `test_prune_irs_executes_only_against_hgtest_orphans` skips
+  whenever the device holds any non-`HGTEST` orphan — the recorded final run is
+  `20 passed, 1 skipped` for exactly that reason, and it is a *permanent*
+  property of that device, not a transient state. So the one verb whose report
+  fold this branch rewrote is validated by monkeypatched dicts only, which is
+  the gap the suite exists to close ("a signature match cannot catch a renamed
+  keyword, a changed return shape"). `plan_prune_irs`'s CLI cross-check in
+  `test_read_verbs.py` skips on the same device state, so the destructive path
+  has no hardware evidence at all. Fix: make the gate satisfiable rather than
+  device-dependent — the engine's `ir_prune(only=...)` narrows to given hashes
+  and still refuses referenced ones, so a test-only call could prune exactly the
+  suite's own `HGTEST` orphan on any device.
+
+## 29. The `gc` half of sync is on the port surface but folded by nothing (review finding, 2026-07-27)
+
+`setlist_sync.sync_setlists` reports GC deletions in its **own** bucket,
+`gc: {deleted: [...]}`, separate from `pool: {deleted: [...]}`.
+`_summarize_sync_report` reads only `pool`, so a `gc=True` sync would report
+`… 0 deleted …` over a GC phase that removed real pool presets — precisely the
+"reported a no-op over a real device mutation" class the `pool.deleted` fold was
+written to close, on the more destructive half. Latent today: every UI call site
+passes `gc=False` (`screens/setlists.py:406,416,438`), which is also why the
+live suite excludes it. Related, same latency: `sync_setlist(name, gc=True)` is
+accepted by the port signature, but the engine honours `gc` only on the
+all-setlists run, so it is silently a no-op there.
+
+Work when picked up: either fold `report["gc"]["deleted"]` into the summary and
+pin it offline like the `pool` buckets, or — the smaller diff — drop `gc` from
+the port surface (`sync_setlist`/`sync_all`/`plan_sync_all`) until a UI gesture
+actually needs it. Do not leave it half-wired: `plan_sync_all(gc=True)` already
+renders "GC: remove pool presets no setlist references" as a confirm line, so
+the plan promises an outcome the result message cannot report.
+
+## 30. Device IR delete/rename address by display name, push addresses by hash (review finding, 2026-07-27)
+
+`action_push_ir` deliberately sends `ir.irhash or ir.name` ("names are routinely
+duplicated … core resolves an exact hash key first", `screens/irs.py:368-370`).
+`action_delete_ir` and the rename input both send `ir.name`
+(`screens/irs.py:384,496`), and the port's own live tests address both verbs by
+`irhash` — so the screen is the only caller taking the ambiguous path. With two
+device IRs sharing a display name, `resolve_device_ir_live` raises
+`ambiguous … use the 32-hex hash`; it fails soft with that text, so nothing is
+mis-deleted, but the TUI has no input for a hash and the user cannot proceed.
+For delete, the refusal also arrives *after* they confirm the destructive modal
+(`plan_delete_ir` formats without resolving).
+
+Not a one-line swap: `delete_ir`/`rename_ir` interpolate the argument into their
+result message, so passing a hash would replace the IR's name with 32 hex
+characters in the footer for the common, unambiguous case. Work when picked up:
+address by hash and carry the display name separately for the message (as
+`push_ir` already does, relabelling via the IR mapping), and have
+`plan_delete_ir` resolve so an ambiguity is reported before the modal opens
+rather than after the confirm. Overlaps #22's "identical rows" theme.
+
+## 31. Engine: `sync_setlists` reports nothing when the device *rejects* a mirror delete (review finding, 2026-07-27)
+
+Engine-side, so it cannot be fixed here — file against helixgen-core when
+picked up.
+
+In `setlist_sync.sync_setlists`' managed-set mirror-delete loop, a
+`client._raw.delete(...)` that returns **falsy** (device non-zero status, no
+exception) emits a progress event and deliberately touches neither `errors[]`
+nor `result["pool"]` — the comment says so verbatim ("Progress-only — do NOT
+touch errors[]/result (existing behavior preserved)"). A pool preset the device
+refused to delete therefore appears in `deleted`, `delete_skipped` and `errors`
+alike: nowhere.
+
+Consequence here: `_summarize_sync_report` reports `ok=True` and a `deleted`
+count that silently under-counts, over a device that refused a real delete —
+the same "success over an engine refusal" class the four `core/real.py` verbs
+were fixed for (spec `docs/superpowers/specs/2026-07-27-live-smoke-suite.md`),
+on the one path where the port has no signal to fold. Nothing in this repo can
+detect it; the fix is a bucket (or an `errors[]` entry) on the engine side.
+
+## 32. `sync_tone` can mirror-delete unrelated tones with no confirm (review finding, 2026-07-27)
+
+`S` on the Library screen is an instant-tier action: no `ConfirmModal`. It calls
+`sync_tone` -> `sync_setlists(setlists=[...])`, and the engine's managed-set
+mirror deletes are scoped to the **whole manifest**, not the setlists passed in
+— so syncing one tone can delete *other* tones' presets from the device pool,
+with no preview and no confirm. `sync_setlist` (`S` on Setlists) has the same
+shape. `plan_sync_all` now names the class of deletes in its confirm (it can't
+name the tones: that needs prior-placement evidence plus a device pool listing),
+but the two targeted verbs have no confirm to put it in.
+
+Work when picked up: decide whether a targeted sync deserves a confirm at all —
+the deletes are the ordinary "unsync a tone, then sync" flow working as designed,
+and gating every `S` behind a modal would be a real usability cost. The cheaper
+half is a device-side preview verb in core that returns the delete candidates, so
+a confirm can name them instead of the class. Related: #29 (`gc` half-wired).
