@@ -32,6 +32,25 @@ _RESTORE_UNSUPPORTED = (
 )
 
 
+def _reraise_connect_failure(exc: Exception) -> None:
+    """Re-raise as ``DeviceUnreachable`` iff ``exc`` is the engine's CONNECT
+    failure; return otherwise, leaving the caller to fail soft.
+
+    ``maintenance.ir_prune`` connects itself (no ``_session``), so both prune
+    halves need the split ``_session`` performs for everyone else. Only
+    ``HelixClient.connect``'s "no Helix Stadium answered at <ip>:<port>" means
+    the device is gone. Every other ``HelixError`` out of ``ir_prune`` is an
+    abort on a REACHABLE device — the confirm re-scan disagreeing, a dangling
+    setlist reference, an incomplete pool listing, a strict listing on a
+    truncated reply — and mapping those to unreachable flips the whole app
+    offline over a healthy device while discarding the engine's remediation
+    text. Enumerating the one connect message is the closed set; enumerating
+    the aborts is not (they grow with the engine).
+    """
+    if "no Helix Stadium answered" in str(exc):
+        raise DeviceUnreachable(str(exc)) from exc
+
+
 class RealDevicePort:
     """DevicePort over helixgen's device client. Offline-first, thin per verb."""
 
@@ -338,10 +357,17 @@ class RealDevicePort:
         through ``DeviceService.query``, which reports the failure and never
         opens the modal. Swallowing it offered a confirmable prune with no
         preview of what the confirm would delete."""
-        from helixgen.device import maintenance
+        from helixgen.device import HelixError, maintenance
 
         ip = self._resolve_ip()
-        report = maintenance.ir_prune(ip=ip, port=self._port, execute=False)
+        try:
+            report = maintenance.ir_prune(ip=ip, port=self._port, execute=False)
+        except HelixError as exc:
+            # This half runs FIRST, and ir_prune connects itself: without the
+            # split, a device off the LAN raises past DeviceService as a generic
+            # error and the header keeps claiming "connected".
+            _reraise_connect_failure(exc)
+            raise
         # The dry-run report is ``{ok, dry_run, device_irs, referenced,
         # protected, orphans, deleted, warnings, errors}`` — the delete
         # candidates are ``orphans`` (``protected`` needs force, which
@@ -375,18 +401,10 @@ class RealDevicePort:
             try:
                 report = maintenance.ir_prune(ip=ip, port=self._port, execute=True)
             except HelixError as exc:
-                # ir_prune connects itself (no ``_session``), and its likeliest
-                # failure is an ABORT on a healthy device — the re-scan/pool
-                # cross-check disagreeing, nothing deleted. Letting ``_op`` map
-                # every HelixError to DeviceUnreachable would report that as
-                # "device offline" and flip the whole app offline.
-                #
-                # Only that abort, though: ir_prune's own connect raises
-                # HelixError("no Helix Stadium answered at ...") for a device
-                # that dropped off the LAN, and swallowing THAT would leave the
-                # app claiming "connected" over an unreachable device.
-                if "listings changed" not in str(exc):
-                    raise
+                # Connect failure -> offline; every other abort is a healthy
+                # device refusing to delete, so fail soft and keep the engine's
+                # remediation text. See ``_reraise_connect_failure``.
+                _reraise_connect_failure(exc)
                 return OpResult(ok=False, message=f"prune aborted: {exc}")
             # Per-IR delete refusals accumulate in ``errors`` and set
             # ``ok=False`` WITHOUT raising (same class as the push_ir fix).

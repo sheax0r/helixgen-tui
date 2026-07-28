@@ -69,9 +69,11 @@ Safety model (encoded as fixtures)
   narrower than the container list suggests.
 * The repo-wide session guard in ``tests/conftest.py`` verifies the user's
   real helixgen home (``$HELIXGEN_HOME``, else ``~/.helixgen``, resolved the
-  same way and at the same time as ``_REAL_HELIXGEN`` below — everything
-  except the ``locks/`` subtree) is untouched at teardown, by full mtime
-  snapshot.
+  same way and at the same time as ``_REAL_HELIXGEN`` below) is untouched at
+  teardown, by full mtime snapshot. Two subtrees are excluded: the real lease
+  root (``$HELIXGEN_LOCKS``, else ``<home>/locks`` — lease churn is this
+  suite's whole point) and ``.git`` metadata (``~/.helixgen`` is a git repo,
+  so an ambient ``git status`` refreshing the index is not a state leak).
 * Every artifact the suite creates carries the ``HGTEST`` prefix; teardown
   helpers refuse to touch anything without it.
 
@@ -134,7 +136,15 @@ _LIVE_DIR = Path(__file__).resolve().parent
 #: derives ``locks/`` from it, so hardcoding ``~/.helixgen`` on a machine with a
 #: custom home would put the session lease in a root no other helixgen process
 #: reads — the run's whole exclusion guarantee, silently doing nothing.
-_REAL_HELIXGEN = Path(os.environ.get("HELIXGEN_HOME") or Path.home() / ".helixgen")
+_REAL_HELIXGEN = Path(os.environ.get("HELIXGEN_HOME") or Path.home() / ".helixgen").expanduser()
+#: The REAL lease root, resolved with the engine's OWN precedence
+#: (``helixgen.locks.locks_root``): ``$HELIXGEN_LOCKS`` WINS over the
+#: ``$HELIXGEN_HOME``-derived default. Deriving it from the home alone would
+#: put the session lease in a root no other helixgen process on a machine with
+#: a custom ``$HELIXGEN_LOCKS`` reads — the run's whole exclusion guarantee,
+#: silently doing nothing. That is the same inertness the comment above guards
+#: against, one env var further down the chain.
+_REAL_LOCKS = Path(os.environ.get("HELIXGEN_LOCKS") or _REAL_HELIXGEN / "locks").expanduser()
 
 
 def _resolve_device_ip() -> str | None:
@@ -147,9 +157,11 @@ def _resolve_device_ip() -> str | None:
     Anything unexpected is swallowed: this runs at COLLECTION time on every
     default (offline) run, so a raise here would break plain ``pytest`` for
     someone who never asked for the live suite."""
-    from helixgen.device.discovery import resolve_ip
-
     try:
+        # inside the try: an import error is exactly the "anything unexpected"
+        # the docstring promises to swallow, and it was the one path left out.
+        from helixgen.device.discovery import resolve_ip
+
         return resolve_ip(warn=False)  # warn=False: no stderr noise at collection
     except Exception:  # noqa: BLE001 — no configured device is a skip, not an error
         return None
@@ -229,7 +241,7 @@ def _live_env(scratch: Path, real_library: Path):
         # The advisory-lock root stays REAL (it would otherwise derive from
         # the redirected home): the session lease exists to exclude OTHER
         # helixgen processes on this machine. See the module docstring.
-        "HELIXGEN_LOCKS": str(_REAL_HELIXGEN / "locks"),
+        "HELIXGEN_LOCKS": str(_REAL_LOCKS),
         "HELIXGEN_SETLISTS": str(scratch / "setlists.json"),
         "HELIXGEN_DEVICE_SLOTS": str(scratch / "device-slots.json"),
         "HELIXGEN_IRS": str(scratch / "irs"),

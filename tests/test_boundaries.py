@@ -83,27 +83,68 @@ def test_fake_core_setlist_port_records_mutations():
     assert core.setlists.calls == [("add_tone", ("Gig 1", "tone-1"))]
 
 
-def test_real_home_guard_snapshot_excludes_only_the_locks_subtree(tmp_path):
+def _load_conftest(relpath: str, name: str):
+    """Import a conftest BY PATH, not `from conftest import ...`:
+    tests/live/conftest.py has no package dir, so it also imports under the
+    bare name "conftest" and wins."""
+    spec = importlib.util.spec_from_file_location(
+        name, pathlib.Path(__file__).parent / relpath
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_real_home_guard_snapshot_excludes_only_locks_and_git_metadata(tmp_path):
     """The session guard's whole value is the diff being non-empty when real
     state changes: an over-broad exclusion would return {} for both snapshots
-    and pass unconditionally, silently dropping the backstop."""
-    # by path, not `from conftest import ...`: tests/live/conftest.py has no
-    # package dir, so it also imports under the bare name "conftest" and wins.
-    spec = importlib.util.spec_from_file_location(
-        "_root_conftest", pathlib.Path(__file__).parent / "conftest.py"
-    )
-    root_conftest = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(root_conftest)
-    _snapshot_real_home = root_conftest._snapshot_real_home
+    and pass unconditionally, silently dropping the backstop.
+
+    ``.git`` is excluded because ~/.helixgen is itself a git repo — an ambient
+    ``git status`` refreshes ``.git/index`` and failed the session over a diff
+    of nothing but index mtimes. A leaked write still lands in the worktree."""
+    _snapshot_real_home = _load_conftest("conftest.py", "_root_conftest")._snapshot_real_home
 
     (tmp_path / "library").mkdir()
     (tmp_path / "library" / "index.json").write_text("{}")
     (tmp_path / "locks").mkdir()
     (tmp_path / "locks" / "all.lock").write_text("x")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "index").write_text("x")
 
-    snapshot = _snapshot_real_home(tmp_path)
+    snapshot = _snapshot_real_home(tmp_path, locks=tmp_path / "locks")
     assert set(snapshot) == {
         str(tmp_path / "library"),
         str(tmp_path / "library" / "index.json"),
     }
     assert _snapshot_real_home(tmp_path / "missing") is None
+
+
+def test_real_home_guard_excludes_the_lock_root_the_engine_actually_uses(
+    tmp_path, monkeypatch
+):
+    """``locks_root()`` prefers $HELIXGEN_LOCKS over the $HELIXGEN_HOME-derived
+    default, so a guard deriving ``<home>/locks`` excludes the WRONG subtree on
+    a machine with a custom lock root — and then fails the session over the
+    live suite's own expected lease churn."""
+    monkeypatch.setenv("HELIXGEN_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HELIXGEN_LOCKS", str(tmp_path / "elsewhere"))
+    root_conftest = _load_conftest("conftest.py", "_root_conftest_custom_locks")
+
+    from helixgen import locks
+
+    assert root_conftest.REAL_LOCKS_ROOT == locks.locks_root()
+
+
+def test_live_suite_keeps_the_lock_root_the_engine_actually_reads(tmp_path, monkeypatch):
+    """The session `all` lease exists to exclude OTHER helixgen processes on
+    this machine. Writing it under ``<home>/locks`` while the machine's engine
+    reads ``$HELIXGEN_LOCKS`` puts it in a root nobody consults — the run's
+    whole exclusion guarantee, silently doing nothing."""
+    monkeypatch.setenv("HELIXGEN_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HELIXGEN_LOCKS", str(tmp_path / "elsewhere"))
+    live_conftest = _load_conftest("live/conftest.py", "_live_conftest_custom_locks")
+
+    from helixgen import locks
+
+    assert live_conftest._REAL_LOCKS == locks.locks_root()

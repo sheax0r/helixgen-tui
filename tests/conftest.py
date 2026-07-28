@@ -50,26 +50,42 @@ def tmp_home(tmp_path, monkeypatch):
 #: trivially and the guard would be silently inert.
 REAL_HELIXGEN_HOME = pathlib.Path(
     os.environ.get("HELIXGEN_HOME") or pathlib.Path.home() / ".helixgen"
-)
+).expanduser()
+
+#: The real lease root, resolved with the engine's OWN precedence
+#: (``helixgen.locks.locks_root``): ``$HELIXGEN_LOCKS`` WINS over the
+#: ``$HELIXGEN_HOME``-derived default. Deriving it from the home alone would
+#: exclude the wrong subtree on a machine with a custom lock root.
+REAL_LOCKS_ROOT = pathlib.Path(
+    os.environ.get("HELIXGEN_LOCKS") or REAL_HELIXGEN_HOME / "locks"
+).expanduser()
 
 
-def _snapshot_real_home(root: pathlib.Path = REAL_HELIXGEN_HOME) -> dict[str, float] | None:
+def _snapshot_real_home(
+    root: pathlib.Path = REAL_HELIXGEN_HOME,
+    locks: pathlib.Path = REAL_LOCKS_ROOT,
+) -> dict[str, float] | None:
     """Read-only: file list + mtimes of the real helixgen home, or None if it
     doesn't exist.
 
-    The ``locks/`` subtree is excluded: helixgen's advisory device leases are
-    ephemeral cross-process coordination files, and the live suite
-    (``tests/live/``) deliberately keeps its lock root REAL so other helixgen
-    processes on this machine serialize against it — lease churn there is
-    expected, not a state leak.
+    Two exclusions, both narrow:
+
+    * the lease root: helixgen's advisory device leases are ephemeral
+      cross-process coordination files, and the live suite (``tests/live/``)
+      deliberately keeps its lock root REAL so other helixgen processes on this
+      machine serialize against it — lease churn there is expected, not a leak.
+    * ``.git`` metadata: ``~/.helixgen`` is itself a git repo, so any ambient
+      ``git status`` (an editor, a shell prompt, a parallel agent session)
+      refreshes ``.git/index`` and used to fail the session with a diff of
+      nothing but index mtimes. Nothing the suite could leak lives inside
+      ``.git/`` — a leaked write lands in the WORKTREE, which is still covered.
     """
     if not root.exists():
         return None
-    locks = root / "locks"
     return {
         str(p): p.stat().st_mtime
         for p in root.rglob("*")
-        if locks not in p.parents and p != locks
+        if locks not in p.parents and p != locks and ".git" not in p.parts
     }
 
 

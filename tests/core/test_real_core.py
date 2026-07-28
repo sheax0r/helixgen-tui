@@ -393,6 +393,58 @@ def test_plan_prune_irs_offline_raises_unreachable(offline):
         build_core().device.plan_prune_irs()
 
 
+def test_plan_prune_irs_connect_failure_flips_the_app_offline(tmp_home, monkeypatch):
+    """The plan runs FIRST in the prune flow, and ``ir_prune`` connects itself —
+    so a device that dropped off the LAN raises HelixError here too. Letting the
+    raw HelixError out makes DeviceService report a generic error and leave the
+    header claiming "connected" over an unreachable device: the same asymmetry
+    ``prune_irs`` is already guarded against, on the half that runs first."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise HelixError("no Helix Stadium answered at 10.255.255.1:2002 (timed out)")
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    with pytest.raises(DeviceUnreachable):
+        build_core().device.plan_prune_irs()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # _verify_pool_covers_references, both of its raises
+        "setlist 'Rock' has a stale (dangling) reference to cid 12, whose pool "
+        "preset no longer exists — a leftover from a deleted preset. Remove it "
+        "before pruning: re-sync the setlist (helixgen device sync 'Rock')",
+        "pool listing looks incomplete: setlist 'Rock' references cid 12 which "
+        "the pool listing doesn't contain; aborting — retry",
+        # list_presets/list_irs strict= on a silent-empty or partial reply
+        "empty reply to /GetContainerContents; refusing to read it as 'no presets'",
+    ],
+)
+def test_prune_irs_healthy_device_aborts_are_not_reported_as_offline(
+    tmp_home, monkeypatch, message
+):
+    """``_scan`` aborts on a REACHABLE device in more ways than the confirm
+    re-scan disagreeing: the pool cross-check has two of its own, and strict
+    listings raise on a truncated reply. Matching one abort's wording as the
+    allowlist re-raises all the others into ``_op``, which reports a healthy
+    device as "device offline" and throws away the engine's remediation text."""
+    from helixgen.device import HelixError, maintenance
+
+    monkeypatch.setenv("HELIXGEN_HELIX_IP", "10.255.255.1")
+
+    def boom(**k):
+        raise HelixError(message)
+
+    monkeypatch.setattr(maintenance, "ir_prune", boom)
+    result = build_core().device.prune_irs()
+    assert result.ok is False
+    assert message in result.message
+
+
 def test_prune_irs_counts_deletions_and_fails_on_engine_errors(tmp_home, monkeypatch):
     """``ir_prune`` accumulates per-IR refusals in ``errors`` and sets ok=False
     WITHOUT raising — a discarded report reported success over a failed prune."""
